@@ -4,6 +4,7 @@ import com.nuvio.tv.data.remote.dto.MetaDto
 import com.nuvio.tv.data.remote.dto.MetaLinkDto
 import com.nuvio.tv.data.remote.dto.VideoDto
 import com.nuvio.tv.domain.model.ContentType
+import com.nuvio.tv.domain.model.EpgEntry
 import com.nuvio.tv.domain.model.Meta
 import com.nuvio.tv.domain.model.MetaLink
 import com.nuvio.tv.domain.model.PosterShape
@@ -33,6 +34,7 @@ fun MetaDto.toDomain(episodeLabel: String = "Episode"): Meta {
         released = released,
         landscapePoster = landscapePoster,
         description = description,
+        epgSchedule = epgSchedule?.map { EpgEntry(s = it.s, e = it.e, t = it.t, d = it.d) },
         releaseInfo = releaseInfo,
         status = status?.trim()?.takeIf { it.isNotBlank() },
         imdbRating = imdbRating?.toFloatOrNull(),

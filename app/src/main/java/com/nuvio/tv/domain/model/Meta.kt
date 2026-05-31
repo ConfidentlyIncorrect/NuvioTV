@@ -44,7 +44,10 @@ data class Meta(
     val hasLandscapePoster: Boolean? = null,
     val hasLogo: Boolean? = null,
     val hasLinks: Boolean? = null,
-    val hasVideos: Boolean? = null
+    val hasVideos: Boolean? = null,
+    // usa-tv-next: absolute-time guide window (with synopsis) so the detail screen can recompute
+    // NOW PLAYING / UP NEXT / today's schedule live, identically across EPG sources. Null otherwise.
+    val epgSchedule: List<EpgEntry>? = null
 ) {
     val apiType: String
         get() = type.toApiString(rawType)

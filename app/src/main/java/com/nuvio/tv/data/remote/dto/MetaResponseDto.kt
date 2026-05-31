@@ -19,6 +19,8 @@ data class MetaDto(
     @Json(name = "logo") val logo: String? = null,
     @Json(name = "landscapePoster") val landscapePoster: String? = null,
     @Json(name = "description") val description: String? = null,
+    // usa-tv-next extension: live guide window (with synopsis) for the detail screen. Optional.
+    @Json(name = "epgSchedule") val epgSchedule: List<EpgEntryDto>? = null,
     @Json(name = "releaseInfo") val releaseInfo: String? = null,
     @Json(name = "released") val released: String? = null,
     @Json(name = "status") val status: String? = null,

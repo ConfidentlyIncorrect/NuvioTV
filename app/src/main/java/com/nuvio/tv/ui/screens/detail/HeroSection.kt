@@ -61,6 +61,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import android.util.Log
 import com.nuvio.tv.R
+import com.nuvio.tv.core.util.EpgGuide
 import com.nuvio.tv.domain.model.ContentType
 import com.nuvio.tv.domain.model.Meta
 import com.nuvio.tv.domain.model.MDBListRatings
@@ -311,10 +312,25 @@ fun HeroContentSection(
                         Spacer(modifier = Modifier.height(14.dp))
                     }
 
-                    // Always show series/movie description, not episode description
-                    if (meta.description != null) {
+                    // Description. For usa-tv-next live-TV channels the addon sends `epgSchedule`
+                    // (absolute-time guide window); recompute the NOW PLAYING / UP NEXT / today's
+                    // schedule block on a 30s clock so it stays live and is formatted identically
+                    // regardless of the channel's EPG source. Falls back to the static description.
+                    var nowMs by remember { mutableStateOf(System.currentTimeMillis()) }
+                    LaunchedEffect(meta.epgSchedule != null) {
+                        if (meta.epgSchedule != null) {
+                            while (true) {
+                                nowMs = System.currentTimeMillis()
+                                kotlinx.coroutines.delay(30_000L)
+                            }
+                        }
+                    }
+                    val displayDescription = if (!meta.epgSchedule.isNullOrEmpty()) {
+                        EpgGuide.buildDetail(meta.epgSchedule, nowMs) ?: meta.description
+                    } else meta.description
+                    if (displayDescription != null) {
                         Text(
-                            text = meta.description,
+                            text = displayDescription,
                             style = MaterialTheme.typography.bodyMedium,
                             color = NuvioColors.TextPrimary,
                             overflow = TextOverflow.Clip,

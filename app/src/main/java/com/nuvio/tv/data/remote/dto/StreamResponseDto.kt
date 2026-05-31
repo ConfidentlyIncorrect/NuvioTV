@@ -34,7 +34,8 @@ data class StreamDto(
 data class EpgEntryDto(
     @Json(name = "s") val s: String? = null,
     @Json(name = "e") val e: String? = null,
-    @Json(name = "t") val t: String? = null
+    @Json(name = "t") val t: String? = null,
+    @Json(name = "d") val d: String? = null
 )
 
 @JsonClass(generateAdapter = true)

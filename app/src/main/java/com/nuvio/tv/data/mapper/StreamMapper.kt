@@ -21,7 +21,7 @@ fun StreamDto.toDomain(addonName: String, addonLogo: String?): Stream = Stream(
     title = title,
     description = description,
     epg = epg,
-    epgSchedule = epgSchedule?.map { EpgEntry(s = it.s, e = it.e, t = it.t) },
+    epgSchedule = epgSchedule?.map { EpgEntry(s = it.s, e = it.e, t = it.t, d = it.d) },
     url = url,
     ytId = ytId,
     infoHash = infoHash,

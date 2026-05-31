@@ -111,9 +111,10 @@ data class Stream(
 // One programme in a channel's guide window (usa-tv-next). Times are ISO-8601 UTC ("...Z").
 @Immutable
 data class EpgEntry(
-    val s: String?,   // start (ISO-8601 UTC)
-    val e: String?,   // stop  (ISO-8601 UTC, may be null)
-    val t: String?    // title
+    val s: String?,        // start (ISO-8601 UTC)
+    val e: String?,        // stop  (ISO-8601 UTC, may be null)
+    val t: String?,        // title
+    val d: String? = null  // description/synopsis (detail screen only; absent for the stream panel)
 )
 
 @Immutable
