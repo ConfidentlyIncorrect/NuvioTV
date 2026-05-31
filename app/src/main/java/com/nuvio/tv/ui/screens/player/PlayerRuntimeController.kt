@@ -401,6 +401,10 @@ class PlayerRuntimeController(
     internal var hasRetriedCurrentStreamAfterUnexpectedNpe: Boolean = false
     internal var hasRetriedCurrentStreamAfterMediaPeriodHolderCrash: Boolean = false
     internal var timeoutRecoveryAttempts: Int = 0
+    // Live HLS: last time we auto-recovered from ERROR_CODE_BEHIND_LIVE_WINDOW by seeking to the
+    // live edge. Legit recoveries are minutes apart (the window slides as you watch); this only
+    // throttles a hot loop where the live edge itself is unreachable.
+    internal var lastBehindLiveRecoveryMs: Long = 0L
     internal var errorRetryCount: Int = 0
     internal var consecutiveAutoPlayCount: Int = 0
     internal var errorRetryJob: Job? = null

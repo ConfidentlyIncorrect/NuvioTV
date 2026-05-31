@@ -1052,6 +1052,28 @@ internal fun PlayerRuntimeController.initializePlayer(
                         }
                         cancelStableProgressReset()
 
+                        // Live HLS drift: ERROR_CODE_BEHIND_LIVE_WINDOW (1002) fires when playback
+                        // falls behind the available segment window (typical after a buffer stall on
+                        // a live channel — the "source:1002, works if replayed" symptom). Recover
+                        // automatically by jumping to the live edge and re-preparing, instead of
+                        // surfacing the error. Time-throttled so a genuinely-unreachable live edge
+                        // can't hot-loop (then it falls through to normal error handling).
+                        if (error.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW) {
+                            val player = _exoPlayer
+                            val now = android.os.SystemClock.elapsedRealtime()
+                            if (player != null && now - lastBehindLiveRecoveryMs > 5000L) {
+                                lastBehindLiveRecoveryMs = now
+                                Log.i(
+                                    PlayerRuntimeController.TAG,
+                                    "BEHIND_LIVE_WINDOW: seeking to live edge + re-preparing host=${currentStreamUrl.safeHost()}"
+                                )
+                                player.seekToDefaultPosition()
+                                player.prepare()
+                                player.playWhenReady = true
+                                return
+                            }
+                        }
+
                         // Error handlers: DV codec failures, audio decoder issues, codec state errors.
                         if (error.isDolbyVisionDecoderFailure() && !isMapDv7ToHevcActiveForCurrentPlayback) {
                             // Manual Convert-to-DV8.1 mode 2 failed to decode: try
