@@ -208,6 +208,9 @@ class MainActivity : ComponentActivity() {
     lateinit var startupSyncService: StartupSyncService
 
     @Inject
+    lateinit var androidTvChannelSyncService: com.nuvio.tv.core.sync.androidtv.AndroidTvChannelSyncService
+
+    @Inject
     lateinit var profileSettingsSyncService: ProfileSettingsSyncService
 
     @Inject
@@ -778,6 +781,14 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         profileSettingsSyncService.requestForegroundPull()
+        androidTvChannelSyncService.onForegroundChanged(true)
+    }
+
+    override fun onStop() {
+        super.onStop()
+        // App going to background (e.g. user returning to the launcher): reconcile the
+        // Continue Watching channel once so Projectivy repaints it with fresh progress.
+        androidTvChannelSyncService.onForegroundChanged(false)
     }
 
     override fun onDestroy() {
