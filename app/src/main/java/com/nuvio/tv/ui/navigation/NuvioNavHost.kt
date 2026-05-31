@@ -1015,7 +1015,10 @@ fun NuvioNavHost(
                 showBuiltInHeader = !hideBuiltInHeaders,
                 onNavigateToTrakt = { navController.navigate(Screen.Trakt.route) },
                 onNavigateToAddons = { navController.navigate(Screen.AddonManager.route) },
-                onNavigateToAuthQrSignIn = { navController.navigate(Screen.AuthQrSignIn.route) },
+                // custom: route Settings sign-in to the EMAIL screen (signInWithPassword,
+                // direct Supabase) instead of the QR flow, whose web host (app.nuvio.tv) is
+                // down. The email screen still links out to QR via onNavigateToQrSignIn.
+                onNavigateToAuthQrSignIn = { navController.navigate(Screen.AuthSignIn.route) },
                 onNavigateToManageProfiles = { navController.navigate(Screen.ManageProfiles.route) },
                 onNavigateToSupportersContributors = {
                     navController.navigate(Screen.SupportersContributors.route)
