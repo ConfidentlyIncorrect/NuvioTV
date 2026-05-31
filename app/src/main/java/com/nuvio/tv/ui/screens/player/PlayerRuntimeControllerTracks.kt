@@ -132,11 +132,20 @@ internal fun PlayerRuntimeController.updateAvailableTracks(tracks: Tracks) {
                     val isSongsAndSigns = trackTexts.any {
                         it.contains("songs", ignoreCase = true) && it.contains("sign", ignoreCase = true)
                     }
+                    // In-band CEA-608/708 closed captions (live US TV) usually carry no label or
+                    // language — surface them as "Closed Captions [CCn]" so they're findable instead
+                    // of an opaque "Subtitle N".
+                    val isClosedCaption = format.sampleMimeType == MimeTypes.APPLICATION_CEA608 ||
+                        format.sampleMimeType == MimeTypes.APPLICATION_CEA708
+                    val ccLabel = if (isClosedCaption) {
+                        val ch = format.accessibilityChannel.takeIf { it != androidx.media3.common.Format.NO_VALUE }
+                        if (ch != null && ch > 0) "Closed Captions [CC$ch]" else "Closed Captions"
+                    } else null
 
                     subtitleTracks.add(
                         TrackInfo(
                             index = subtitleTracks.size,
-                            name = format.label ?: format.language ?: context.getString(com.nuvio.tv.R.string.player_track_subtitle_fallback, subtitleTracks.size + 1),
+                            name = format.label ?: ccLabel ?: format.language ?: context.getString(com.nuvio.tv.R.string.player_track_subtitle_fallback, subtitleTracks.size + 1),
                             language = format.language,
                             trackId = format.id,
                             codec = CustomDefaultTrackNameProvider.formatNameFromMime(format.sampleMimeType),

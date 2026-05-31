@@ -10,6 +10,7 @@ import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.cache.SimpleCache
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.dash.DashMediaSource
+import androidx.media3.exoplayer.hls.DefaultHlsExtractorFactory
 import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.MediaSource
@@ -44,6 +45,16 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
     private var customExtractorsFactory: ExtractorsFactory? = null
     private var customSubtitleParserFactory: SubtitleParser.Factory? = null
     private val loadErrorHandlingPolicy = PlayerLoadErrorHandlingPolicy()
+
+    // HLS extractor factory that EXPOSES in-band CEA-608/708 closed captions even when the manifest
+    // declares no CLOSED-CAPTIONS rendition — the common case for re-streamed live US TV (e.g. the
+    // TVPass feeds, which are bare media playlists with captions muxed into the TS). Without this,
+    // those captions are never offered as a selectable text track. (Media3's own default also sets
+    // this true, but DefaultMediaSourceFactory gives us no hook to guarantee it for HLS, so we route
+    // HLS through HlsMediaSource.Factory with this explicit factory.)
+    private val hlsExtractorFactory by lazy {
+        DefaultHlsExtractorFactory(0, /* exposeCea608WhenMissingDeclarations= */ true)
+    }
 
     @Volatile private var currentVodCacheUrl: String? = null
     @Volatile private var currentVodCacheResolvedUrl: String? = null
@@ -192,9 +203,16 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
         }
 
         val mediaSource = when {
-            isHls && !forceDefaultFactory -> HlsMediaSource.Factory(httpDataSourceFactory)
+            // Always route HLS through HlsMediaSource.Factory (not DefaultMediaSourceFactory) so we
+            // can attach hlsExtractorFactory and surface CEA-608/708 captions. The custom subtitle
+            // parser is preserved for in-band WebVTT; customExtractorsFactory is progressive-only and
+            // irrelevant to HLS, so ignoring it here is correct. (Sidecar subtitleConfigurations are
+            // already handled by the early return above.)
+            isHls -> HlsMediaSource.Factory(httpDataSourceFactory)
+                .setExtractorFactory(hlsExtractorFactory)
                 .setAllowChunklessPreparation(true)
                 .setLoadErrorHandlingPolicy(loadErrorHandlingPolicy)
+                .apply { customSubtitleParserFactory?.let { setSubtitleParserFactory(it) } }
                 .createMediaSource(mediaItem)
             isDash && !forceDefaultFactory -> DashMediaSource.Factory(httpDataSourceFactory)
                 .setLoadErrorHandlingPolicy(loadErrorHandlingPolicy)
