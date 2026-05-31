@@ -78,7 +78,12 @@ object EpgGuide {
      * Full guide block for the channel detail screen: NOW PLAYING (+ synopsis) / UP NEXT
      * (+ synopsis) / today's remaining schedule. Same data, one consistent layout for every source.
      */
-    fun buildDetail(schedule: List<EpgEntry>?, nowMs: Long, maxSchedule: Int = 10): String? {
+    fun buildDetail(
+        schedule: List<EpgEntry>?,
+        nowMs: Long,
+        maxSchedule: Int = 10,
+        clipDescriptions: Boolean = true
+    ): String? {
         val items = normalize(schedule)
         if (items.isEmpty()) return null
         val now = nowProg(items, nowMs)
@@ -88,12 +93,12 @@ object EpgGuide {
             lines.add("▶ NOW PLAYING: ${now.title}")
             val range = if (now.stop != null) "${fmt(now.start)} - ${fmt(now.stop)}" else fmt(now.start)
             lines.add("  $range")
-            now.desc?.let { lines.add("  ${clip(it, 160)}") }
+            now.desc?.let { lines.add("  ${if (clipDescriptions) clip(it, 160) else it}") }
             lines.add("")
         }
         if (next != null) {
             lines.add("⏭ UP NEXT: ${next.title} (${fmt(next.start)})")
-            next.desc?.let { lines.add("  ${clip(it, 120)}") }
+            next.desc?.let { lines.add("  ${if (clipDescriptions) clip(it, 120) else it}") }
             lines.add("")
         }
         // Today's remaining schedule: programmes that start before local midnight and haven't ended.

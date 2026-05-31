@@ -372,7 +372,12 @@ fun HeroContentSection(
                                 .padding(bottom = 12.dp)
                         )
                     }
-                    if (showFullDescription && displayDescription != null) {
+                    // Overlay shows the FULL guide — with the NOW/UP NEXT synopses UNtruncated
+                    // (the inline hero clips them for space; the overlay has room + scrolls).
+                    val fullDescription = if (!meta.epgSchedule.isNullOrEmpty()) {
+                        EpgGuide.buildDetail(meta.epgSchedule, nowMs, clipDescriptions = false) ?: meta.description
+                    } else meta.description
+                    if (showFullDescription && fullDescription != null) {
                         NuvioDialog(
                             onDismiss = { showFullDescription = false },
                             title = meta.name,
@@ -407,7 +412,7 @@ fun HeroContentSection(
                                     .verticalScroll(descScroll)
                             ) {
                                 Text(
-                                    text = displayDescription,
+                                    text = fullDescription,
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = NuvioColors.TextPrimary,
                                     modifier = Modifier.fillMaxWidth()
