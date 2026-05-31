@@ -24,7 +24,10 @@ data class Stream(
     val qualityValue: Int = -1,
     val clientResolve: StreamClientResolve? = null,
     val debridCacheStatus: StreamDebridCacheStatus? = null,
-    val badges: List<StreamBadge> = emptyList()
+    val badges: List<StreamBadge> = emptyList(),
+    // Per-feed EPG / now-next text (usa-tv-next addon extension). Drives the focus-reactive
+    // guide panel on the stream-selection screen. Null for streams/addons that don't send it.
+    val epg: String? = null
 ) {
     /**
      * Returns the primary stream source URL

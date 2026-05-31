@@ -122,6 +122,12 @@ fun StreamScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
     val context = LocalContext.current
     var focusedStreamIndex by rememberSaveable { mutableStateOf(0) }
+    // Focus-reactive guide panel (usa-tv-next): the stream the user is hovering drives the
+    // left-panel EPG; default (nothing hovered yet) falls back to the first stream. Held as a
+    // raw MutableState (not `by`) and READ only inside LeftContentSection via the provider
+    // lambda below, so moving focus recomposes ONLY the panel, never the stream list/cards.
+    val focusedGuideStream = remember { mutableStateOf<Stream?>(null) }
+    val onStreamFocused = remember { { s: Stream -> focusedGuideStream.value = s } }
     var restoreFocusedStream by rememberSaveable { mutableStateOf(false) }
     var pendingRestoreOnResume by rememberSaveable { mutableStateOf(false) }
     var showPlayerChoiceDialog by remember { mutableStateOf(false) }
@@ -361,6 +367,8 @@ fun StreamScreen(
                     runtime = uiState.runtime,
                     genres = uiState.genres,
                     year = uiState.year,
+                    streams = uiState.filteredStreams,
+                    focusedStreamProvider = { focusedGuideStream.value },
                     modifier = Modifier
                         .weight(0.4f)
                         .fillMaxHeight()
@@ -397,6 +405,7 @@ fun StreamScreen(
                     focusedStreamIndex = focusedStreamIndex,
                     shouldRestoreFocusedStream = restoreFocusedStream,
                     onRestoreFocusedStreamHandled = { restoreFocusedStream = false },
+                    onStreamFocused = onStreamFocused,
                     onRetry = { viewModel.onEvent(StreamScreenEvent.OnRetry) },
                     modifier = Modifier
                         .weight(0.6f)
@@ -531,6 +540,8 @@ private fun LeftContentSection(
     runtime: Int?,
     genres: String?,
     year: String?,
+    streams: List<Stream> = emptyList(),
+    focusedStreamProvider: () -> Stream? = { null },
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -627,6 +638,38 @@ private fun LeftContentSection(
                     )
                 }
             }
+
+            // --- Focus-reactive guide panel (usa-tv-next) ----------------------------------
+            // Reading focusedStreamProvider() HERE (not in the parent) scopes recomposition to
+            // this panel — hovering a different stream updates the guide without recomposing the
+            // stream list. Defaults to the first stream when nothing is hovered yet.
+            val focusedGuide = focusedStreamProvider()
+            val panelStream = focusedGuide?.takeIf { fs -> streams.any { it == fs } }
+                ?: streams.firstOrNull()
+            val guideFeed = if (streams.size > 1) panelStream?.getDisplayName() else null
+            val guideText = panelStream?.let { it.epg ?: it.description }
+            if (!guideFeed.isNullOrBlank()) {
+                Spacer(modifier = Modifier.height(14.dp))
+                Text(
+                    text = guideFeed,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = NuvioTheme.extendedColors.textSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center
+                )
+            }
+            if (!guideText.isNullOrBlank() && guideText != guideFeed) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = guideText,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = NuvioColors.TextPrimary,
+                    maxLines = 6,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center
+                )
+            }
         }
     }
 }
@@ -645,6 +688,7 @@ private fun RightStreamSection(
     focusedStreamIndex: Int,
     shouldRestoreFocusedStream: Boolean,
     onRestoreFocusedStreamHandled: () -> Unit,
+    onStreamFocused: (Stream) -> Unit = {},
     onRetry: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -756,7 +800,8 @@ private fun RightStreamSection(
                             onAddonFilterSelected = { onAddonFilterSelectedGuarded(it) },
                             chipFocusRequesters = chipFocusRequesters,
                             orderedAddonNames = orderedAddonNames,
-                            onFocusChanged = { listHasFocus = it }
+                            onFocusChanged = { listHasFocus = it },
+                            onStreamFocused = onStreamFocused
                         )
                     }
                 }
@@ -964,7 +1009,8 @@ private fun StreamsList(
     onAddonFilterSelected: (String?) -> Unit = {},
     chipFocusRequesters: List<FocusRequester> = emptyList(),
     orderedAddonNames: List<String> = emptyList(),
-    onFocusChanged: (Boolean) -> Unit = {}
+    onFocusChanged: (Boolean) -> Unit = {},
+    onStreamFocused: (Stream) -> Unit = {}
 ) {
     val isRtl = androidx.compose.ui.platform.LocalLayoutDirection.current == androidx.compose.ui.unit.LayoutDirection.Rtl
     val firstCardFocusRequester = remember { FocusRequester() }
@@ -1043,6 +1089,7 @@ private fun StreamsList(
                 StreamCard(
                     stream = stream,
                     onClick = { onStreamSelected(stream) },
+                    onFocused = { onStreamFocused(stream) },
                     focusRequester = when {
                         shouldRestoreFocusedStream && index == focusedStreamIndex.coerceIn(0, (streams.lastIndex).coerceAtLeast(0)) -> restoreFocusRequester
                         index == 0 -> firstCardFocusRequester
@@ -1066,6 +1113,7 @@ private fun StreamsList(
 private fun StreamCard(
     stream: Stream,
     onClick: () -> Unit,
+    onFocused: () -> Unit = {},
     focusRequester: FocusRequester? = null,
     onUpKey: (() -> Unit)? = null
 ) {
@@ -1085,6 +1133,7 @@ private fun StreamCard(
         onClick = onClick,
         modifier = Modifier
             .fillMaxWidth()
+            .onFocusChanged { if (it.isFocused) onFocused() }
             .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
             .then(if (onUpKey != null) Modifier.onKeyEvent { event ->
                 if (event.nativeKeyEvent.action == KeyEvent.ACTION_DOWN && event.key == Key.DirectionUp) {

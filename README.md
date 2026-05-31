@@ -26,6 +26,33 @@ It acts as a client-side playback interface that can integrate with the Stremio 
 
 Built with Kotlin and optimized for a TV-first viewing experience.
 
+## This fork
+
+This repository is a fork of [tapframe/NuvioTV](https://github.com/tapframe/NuvioTV), maintained
+to pair with the [**usa-tv-next**](https://github.com/ConfidentlyIncorrect/usa-tv-next) live-TV
+Stremio addon (293 US channels, EPG via Schedules Direct with an epg.pw XMLTV fallback).
+
+### Branches
+
+| Branch | Purpose |
+| --- | --- |
+| `dev` | Tracks upstream `tapframe/NuvioTV` `dev`. Keep clean for clean rebases/merges. |
+| `custom` | Our modifications on top of `dev`. **Build releases from here.** |
+
+Sync upstream into the fork periodically with `git fetch upstream && git rebase upstream/dev`
+on `dev`, then `git rebase dev` (or merge) on `custom`.
+
+### `custom` modifications
+
+- **Focus-reactive EPG guide panel on the stream-selection screen.** As focus moves between a
+  channel's streams (feeds/qualities), the left panel updates to show that stream's program
+  guide; with nothing hovered yet it shows the first stream's. The guide text comes from a new
+  optional `epg` field on each stream (a non-standard Stremio extension emitted by usa-tv-next;
+  it falls back to the stream `description`, and is simply absent/ignored for other addons).
+  Implemented in `StreamScreen.kt` (`LeftContentSection` + `StreamCard` focus wiring) with the
+  field threaded through `StreamResponseDto` → `Stream` → `StreamMapper`. Reads are deferred
+  into the panel composable so hovering recomposes only the panel, never the stream list.
+
 ## Installation
 
 ### Android TV
@@ -44,8 +71,13 @@ Download the latest APK from [GitHub Releases](https://github.com/tapframe/Nuvio
 ### Setup
 
 ```bash
-git clone https://github.com/tapframe/NuvioTV.git
+# This fork (build from the `custom` branch)
+git clone https://github.com/ConfidentlyIncorrect/NuvioTV.git
 cd NuvioTV
+git checkout custom
+
+# Optional: track upstream for syncing
+git remote add upstream https://github.com/tapframe/NuvioTV.git
 ```
 
 ### Full Debug Build

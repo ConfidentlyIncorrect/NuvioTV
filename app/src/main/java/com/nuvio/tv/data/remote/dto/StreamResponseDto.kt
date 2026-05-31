@@ -13,6 +13,9 @@ data class StreamDto(
     @Json(name = "name") val name: String? = null,
     @Json(name = "title") val title: String? = null,
     @Json(name = "description") val description: String? = null,
+    // Non-standard addon extension (usa-tv-next): per-feed EPG / now-next text shown in the
+    // stream-selection left panel as focus moves between streams. Optional; ignored if absent.
+    @Json(name = "epg") val epg: String? = null,
     @Json(name = "url") val url: String? = null,
     @Json(name = "ytId") val ytId: String? = null,
     @Json(name = "infoHash") val infoHash: String? = null,
