@@ -30,28 +30,47 @@ Built with Kotlin and optimized for a TV-first viewing experience.
 
 This repository is a fork of [tapframe/NuvioTV](https://github.com/tapframe/NuvioTV), maintained
 to pair with the [**usa-tv-next**](https://github.com/ConfidentlyIncorrect/usa-tv-next) live-TV
-Stremio addon (293 US channels, EPG via Schedules Direct with an epg.pw XMLTV fallback).
+Stremio addon (293 US channels; a merged multi-source EPG — Schedules Direct → epg.pw →
+epgshare01/i.mjh.nz).
 
 ### Branches
 
 | Branch | Purpose |
 | --- | --- |
-| `dev` | Tracks upstream `tapframe/NuvioTV` `dev`. Keep clean for clean rebases/merges. |
-| `custom` | Our modifications on top of `dev`. **Build releases from here.** |
+| `custom` | All our modifications, on top of upstream `tapframe/NuvioTV` `dev`. **Build releases from here.** |
 
-Sync upstream into the fork periodically with `git fetch upstream && git rebase upstream/dev`
-on `dev`, then `git rebase dev` (or merge) on `custom`.
+**Syncing upstream (merge, not rebase — `custom` is pushed):**
+```bash
+git remote add upstream https://github.com/tapframe/NuvioTV.git   # one-time
+git fetch upstream
+git switch custom && git switch -c sync-dev      # throwaway test branch
+git merge upstream/dev                           # resolve any conflicts, then build/test
+git switch custom && git merge --ff-only sync-dev && git push origin custom
+```
+Use merge (not rebase) so the pushed `custom` history isn't rewritten. The conflict surface is
+small — our changes are localized to the files listed below.
 
 ### `custom` modifications
 
-- **Focus-reactive EPG guide panel on the stream-selection screen.** As focus moves between a
-  channel's streams (feeds/qualities), the left panel updates to show that stream's program
-  guide; with nothing hovered yet it shows the first stream's. The guide text comes from a new
-  optional `epg` field on each stream (a non-standard Stremio extension emitted by usa-tv-next;
-  it falls back to the stream `description`, and is simply absent/ignored for other addons).
-  Implemented in `StreamScreen.kt` (`LeftContentSection` + `StreamCard` focus wiring) with the
-  field threaded through `StreamResponseDto` → `Stream` → `StreamMapper`. Reads are deferred
-  into the panel composable so hovering recomposes only the panel, never the stream list.
+- **Focus-reactive, live EPG guide panel on the stream-selection screen.** As focus moves between
+  a channel's feeds, the left panel shows that stream's program guide (defaults to the first
+  stream). It recomputes **NOW/NEXT on a 30s clock** from a new `epgSchedule` field (absolute-time
+  window emitted by usa-tv-next) so it stays live and self-corrects even from a cached response;
+  it falls back to the `epg` now/next string, then `description`. Focus reads are deferred into the
+  panel composable so hovering recomposes only the panel.
+- **Live channel detail screen.** `HeroSection` recomputes NOW PLAYING / UP NEXT / today's schedule
+  from `meta.epgSchedule` on the same 30s clock, formatted **identically regardless of EPG source**.
+  Both screens share one formatter — `core/util/EpgGuide.kt` (the single source of truth).
+- **CEA-608/708 closed captions for HLS.** Re-streamed live channels carry captions muxed in-band
+  with no declared rendition; `PlayerMediaSourceFactory` routes HLS through `HlsMediaSource.Factory`
+  with `DefaultHlsExtractorFactory(exposeCea608WhenMissingDeclarations=true)`, and
+  `PlayerRuntimeControllerTracks` labels them "Closed Captions [CCn]" so they're selectable.
+- **Email/password sign-in re-enabled on TV** (`AuthSignInScreen` rebuilt via `AccountViewModel`),
+  with first launch defaulting to the email screen + a QR toggle (`MainActivity`, `NuvioNavHost`,
+  Settings→Sign-in route).
+- **Files touched:** `StreamScreen.kt`, `HeroSection.kt`, `Stream.kt`/`Meta.kt`, the `*Dto`s +
+  mappers, `core/util/EpgGuide.kt`, `PlayerMediaSourceFactory.kt`,
+  `PlayerRuntimeControllerTracks.kt`, `AuthSignInScreen.kt`, `MainActivity.kt`, `NuvioNavHost.kt`.
 
 ## Installation
 
@@ -64,9 +83,9 @@ Download the latest APK from [GitHub Releases](https://github.com/tapframe/Nuvio
 ### Prerequisites
 
 - Android Studio (latest version)
-- JDK 11+
+- **JDK 17–21** (the bundled Android Studio JBR 21 at `…/Android Studio/jbr` works; **JDK 26 is not yet supported** by this Gradle/AGP and will crash the build). Point `JAVA_HOME`/Gradle JDK at a 17–21 JDK.
 - Android SDK (API 29+)
-- Gradle 8.0+
+- Gradle 8.13 / AGP 8.13.2 / Kotlin 2.3.0 (via the wrapper)
 
 ### Setup
 
@@ -80,12 +99,22 @@ git checkout custom
 git remote add upstream https://github.com/tapframe/NuvioTV.git
 ```
 
+### Local config (gitignored — never commit)
+
+| File | Keys | Notes |
+| --- | --- | --- |
+| `local.properties` | `sdk.dir`, `TRAKT_CLIENT_ID`, `TRAKT_CLIENT_SECRET` | Trakt creds bake into `BuildConfig` at build time. Create a Trakt API app at https://trakt.tv/oauth/applications/new with Redirect URI `urn:ietf:wg:oauth:2.0:oob` (leave JavaScript/CORS origins blank — device-code flow). Empty = "missing client id/secret". |
+| `local.dev.properties` | `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `TV_LOGIN_WEB_BASE_URL` | Supabase auth config used by the email/browser sign-in path. |
+| `nuviotv.jks` | — | Signing keystore (the debug build uses the `release` signing config). Generate a self-signed key matching the baked-in alias/passwords if missing. |
+
 ### Full Debug Build
 
 ```bash
 ./gradlew :app:compileFullDebugKotlin
-./gradlew :app:assembleFullDebug
+./gradlew :app:assembleFullDebug --no-watch-fs   # produces app/build/outputs/apk/full/debug/*.apk
 ```
+
+> **Build note:** packaging occasionally fails with a flaky `IncrementalSplitterRunnable` error. The Kotlin/codegen still compiled — just re-run with filesystem watching disabled: `./gradlew :app:packageFullDebug --no-watch-fs`. APK splits are produced per-ABI (`app-full-arm64-v8a-debug.apk` for most Android TV boxes) plus a `universal` APK.
 
 ### Running on Emulator or Device
 
