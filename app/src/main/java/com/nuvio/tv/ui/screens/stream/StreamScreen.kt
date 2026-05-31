@@ -85,6 +85,7 @@ import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
 import com.nuvio.tv.core.player.ExternalPlayerLauncher
 import com.nuvio.tv.data.local.PlayerPreference
+import com.nuvio.tv.domain.model.EpgEntry
 import com.nuvio.tv.domain.model.Stream
 import com.nuvio.tv.ui.components.SourceChipItem
 import com.nuvio.tv.ui.components.SourceChipStatus
@@ -529,6 +530,53 @@ private fun StreamGradientLayer(
     )
 }
 
+// --- Live guide computation (usa-tv-next) -------------------------------------------------
+// Compute the NOW/NEXT panel text from the absolute-time schedule window the addon sends, using
+// the device's current clock so it advances over time. SimpleDateFormat (not java.time) keeps
+// this safe on every Android TV API level. Times in the feed are ISO-8601 UTC; we render in the
+// device's local time zone (matches the user's wall clock).
+private val EPG_ISO_PARSER = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.US)
+    .apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }
+private val EPG_TIME_FMT = java.text.SimpleDateFormat("h:mm a", java.util.Locale.US) // device-local tz
+
+private fun parseEpgTime(iso: String?): Long? {
+    if (iso.isNullOrBlank()) return null
+    return try { synchronized(EPG_ISO_PARSER) { EPG_ISO_PARSER.parse(iso)?.time } } catch (e: Exception) { null }
+}
+
+private fun fmtEpgTime(ms: Long): String = synchronized(EPG_TIME_FMT) { EPG_TIME_FMT.format(java.util.Date(ms)) }
+
+private fun buildLiveGuide(schedule: List<EpgEntry>?, nowMs: Long): String? {
+    if (schedule.isNullOrEmpty()) return null
+    data class P(val start: Long, val stop: Long?, val title: String)
+    val items = schedule.mapNotNull { e ->
+        val st = parseEpgTime(e.s) ?: return@mapNotNull null
+        P(st, parseEpgTime(e.e), e.t ?: "")
+    }.sortedBy { it.start }
+    if (items.isEmpty()) return null
+    // NOW = the programme with the GREATEST start <= now, validated to actually cover now.
+    var nowIdx = -1
+    for (i in items.indices) { if (items[i].start <= nowMs) nowIdx = i else break }
+    val now = if (nowIdx >= 0) {
+        val p = items[nowIdx]
+        val eff = p.stop ?: items.getOrNull(nowIdx + 1)?.start ?: (p.start + 6 * 3600_000L)
+        if (eff > nowMs) p else null
+    } else null
+    val next = items.firstOrNull { it.start > nowMs }
+    val sb = StringBuilder()
+    if (now != null) {
+        val range = if (now.stop != null) "${fmtEpgTime(now.start)} - ${fmtEpgTime(now.stop)}" else fmtEpgTime(now.start)
+        sb.append("▶ NOW · ").append(range)
+        if (now.title.isNotBlank()) sb.append('\n').append(now.title)
+    }
+    if (next != null) {
+        if (sb.isNotEmpty()) sb.append("\n\n")
+        sb.append("⏭ NEXT · ").append(fmtEpgTime(next.start))
+        if (next.title.isNotBlank()) sb.append('\n').append(next.title)
+    }
+    return if (sb.isEmpty()) null else sb.toString()
+}
+
 @Composable
 private fun LeftContentSection(
     title: String,
@@ -647,7 +695,20 @@ private fun LeftContentSection(
             val panelStream = focusedGuide?.takeIf { fs -> streams.any { it == fs } }
                 ?: streams.firstOrNull()
             val guideFeed = if (streams.size > 1) panelStream?.getDisplayName() else null
-            val guideText = panelStream?.let { it.epg ?: it.description }
+            // Ticking clock: recompute NOW/NEXT from the absolute schedule window every 30s so the
+            // panel stays live (and self-corrects even if the stream response was cached). Reading
+            // nowMs here scopes recomposition to this panel only. Falls back to the server-baked
+            // `epg` string (older addon / no schedule), then to the stream description.
+            var nowMs by remember { mutableStateOf(System.currentTimeMillis()) }
+            LaunchedEffect(Unit) {
+                while (true) {
+                    nowMs = System.currentTimeMillis()
+                    kotlinx.coroutines.delay(30_000L)
+                }
+            }
+            val guideText = panelStream?.let { s ->
+                buildLiveGuide(s.epgSchedule, nowMs) ?: s.epg ?: s.description
+            }
             if (!guideFeed.isNullOrBlank()) {
                 Spacer(modifier = Modifier.height(14.dp))
                 Text(

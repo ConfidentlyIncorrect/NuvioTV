@@ -27,7 +27,12 @@ data class Stream(
     val badges: List<StreamBadge> = emptyList(),
     // Per-feed EPG / now-next text (usa-tv-next addon extension). Drives the focus-reactive
     // guide panel on the stream-selection screen. Null for streams/addons that don't send it.
-    val epg: String? = null
+    // Used as the FALLBACK when [epgSchedule] is absent (older addon / non-TV streams).
+    val epg: String? = null,
+    // Absolute-time schedule window (usa-tv-next extension): the guide panel recomputes NOW/NEXT
+    // from this on a ticking clock, so it stays live and self-corrects even if this stream
+    // response was cached a while ago (the window reaches ~18h forward). Null if not provided.
+    val epgSchedule: List<EpgEntry>? = null
 ) {
     /**
      * Returns the primary stream source URL
@@ -102,6 +107,14 @@ data class Stream(
         }
     }
 }
+
+// One programme in a channel's guide window (usa-tv-next). Times are ISO-8601 UTC ("...Z").
+@Immutable
+data class EpgEntry(
+    val s: String?,   // start (ISO-8601 UTC)
+    val e: String?,   // stop  (ISO-8601 UTC, may be null)
+    val t: String?    // title
+)
 
 @Immutable
 data class StreamBadge(

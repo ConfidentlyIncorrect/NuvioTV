@@ -7,6 +7,7 @@ import com.nuvio.tv.data.remote.dto.StreamClientResolveRawDto
 import com.nuvio.tv.data.remote.dto.StreamClientResolveStreamDto
 import com.nuvio.tv.data.remote.dto.StreamClientResolveDto
 import com.nuvio.tv.data.remote.dto.StreamDto
+import com.nuvio.tv.domain.model.EpgEntry
 import com.nuvio.tv.domain.model.ProxyHeaders
 import com.nuvio.tv.domain.model.Stream
 import com.nuvio.tv.domain.model.StreamBehaviorHints
@@ -20,6 +21,7 @@ fun StreamDto.toDomain(addonName: String, addonLogo: String?): Stream = Stream(
     title = title,
     description = description,
     epg = epg,
+    epgSchedule = epgSchedule?.map { EpgEntry(s = it.s, e = it.e, t = it.t) },
     url = url,
     ytId = ytId,
     infoHash = infoHash,

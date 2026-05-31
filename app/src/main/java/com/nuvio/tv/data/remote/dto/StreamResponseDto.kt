@@ -16,6 +16,9 @@ data class StreamDto(
     // Non-standard addon extension (usa-tv-next): per-feed EPG / now-next text shown in the
     // stream-selection left panel as focus moves between streams. Optional; ignored if absent.
     @Json(name = "epg") val epg: String? = null,
+    // Absolute-time schedule window (usa-tv-next): the panel recomputes NOW/NEXT locally so it
+    // stays live regardless of response caching. Optional; falls back to `epg` when absent.
+    @Json(name = "epgSchedule") val epgSchedule: List<EpgEntryDto>? = null,
     @Json(name = "url") val url: String? = null,
     @Json(name = "ytId") val ytId: String? = null,
     @Json(name = "infoHash") val infoHash: String? = null,
@@ -25,6 +28,13 @@ data class StreamDto(
     @Json(name = "sources") val sources: List<String>? = null,
     @Json(name = "subtitles") val subtitles: List<SubtitleDto>? = null,
     @Json(name = "clientResolve") val clientResolve: StreamClientResolveDto? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class EpgEntryDto(
+    @Json(name = "s") val s: String? = null,
+    @Json(name = "e") val e: String? = null,
+    @Json(name = "t") val t: String? = null
 )
 
 @JsonClass(generateAdapter = true)
