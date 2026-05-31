@@ -13,11 +13,19 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalConfiguration
 import com.nuvio.tv.ui.components.NuvioDialog
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -372,18 +380,39 @@ fun HeroContentSection(
                         ) {
                             val descScroll = rememberScrollState()
                             val descFocus = remember { FocusRequester() }
-                            LaunchedEffect(Unit) { descFocus.requestFocus() }
-                            Text(
-                                text = displayDescription,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = NuvioColors.TextPrimary,
+                            val descScope = rememberCoroutineScope()
+                            // Reset to the top and grab focus when the overlay opens. The focusable
+                            // is on the fixed-height VIEWPORT (not the tall Text), so opening it does
+                            // NOT trigger a bring-into-view jump to the bottom. D-pad up/down scroll
+                            // the inner content manually (a lone scrollable Text isn't D-pad
+                            // scrollable on its own).
+                            LaunchedEffect(Unit) {
+                                descScroll.scrollTo(0)
+                                descFocus.requestFocus()
+                            }
+                            Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .heightIn(max = 420.dp)
-                                    .verticalScroll(descScroll)
                                     .focusRequester(descFocus)
                                     .focusable()
-                            )
+                                    .onKeyEvent { e ->
+                                        if (e.type != KeyEventType.KeyDown) return@onKeyEvent false
+                                        when (e.key) {
+                                            Key.DirectionDown -> { descScope.launch { descScroll.animateScrollBy(240f) }; true }
+                                            Key.DirectionUp -> { descScope.launch { descScroll.animateScrollBy(-240f) }; true }
+                                            else -> false
+                                        }
+                                    }
+                                    .verticalScroll(descScroll)
+                            ) {
+                                Text(
+                                    text = displayDescription,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = NuvioColors.TextPrimary,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
                         }
                     }
 
