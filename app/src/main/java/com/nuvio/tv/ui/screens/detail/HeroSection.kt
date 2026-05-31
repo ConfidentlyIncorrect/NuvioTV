@@ -12,6 +12,12 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.ui.platform.LocalConfiguration
+import com.nuvio.tv.ui.components.NuvioDialog
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -163,6 +169,8 @@ fun HeroContentSection(
         animationSpec = tween(600),
         label = "logoWidth"
     )
+    // Preferred standard: the logo may rise to at most ~half the screen, never more.
+    val maxLogoHeight = (LocalConfiguration.current.screenHeightDp * 0.55f).dp
 
     Column(
         modifier = Modifier
@@ -184,7 +192,7 @@ fun HeroContentSection(
                     contentDescription = meta.name,
                     onError = { logoLoadFailed = true },
                     modifier = Modifier
-                        .height(logoHeight)
+                        .height(logoHeight.coerceAtMost(maxLogoHeight))
                         .fillMaxWidth(logoMaxWidth)
                         .padding(bottom = logoBottomPadding),
                     contentScale = ContentScale.Fit,
@@ -328,16 +336,55 @@ fun HeroContentSection(
                     val displayDescription = if (!meta.epgSchedule.isNullOrEmpty()) {
                         EpgGuide.buildDetail(meta.epgSchedule, nowMs) ?: meta.description
                     } else meta.description
+                    var showFullDescription by remember { mutableStateOf(false) }
+                    var descriptionTruncated by remember(displayDescription) { mutableStateOf(false) }
+                    var descriptionFocused by remember { mutableStateOf(false) }
                     if (displayDescription != null) {
+                        // Truncate so a long EPG schedule can't push the hero (logo included) off the
+                        // top of the screen. When the text overflows it becomes focusable/clickable —
+                        // OK opens the full text in a scrollable overlay.
                         Text(
                             text = displayDescription,
                             style = MaterialTheme.typography.bodyMedium,
                             color = NuvioColors.TextPrimary,
-                            overflow = TextOverflow.Clip,
+                            maxLines = 6,
+                            overflow = TextOverflow.Ellipsis,
+                            onTextLayout = { descriptionTruncated = it.hasVisualOverflow },
                             modifier = Modifier
                                 .fillMaxWidth(0.6f)
+                                .then(
+                                    if (descriptionTruncated) Modifier
+                                        .onFocusChanged { descriptionFocused = it.isFocused }
+                                        .background(
+                                            if (descriptionFocused) NuvioColors.BackgroundElevated else Color.Transparent
+                                        )
+                                        .clickable { showFullDescription = true }
+                                    else Modifier
+                                )
                                 .padding(bottom = 12.dp)
                         )
+                    }
+                    if (showFullDescription && displayDescription != null) {
+                        NuvioDialog(
+                            onDismiss = { showFullDescription = false },
+                            title = meta.name,
+                            width = 640.dp
+                        ) {
+                            val descScroll = rememberScrollState()
+                            val descFocus = remember { FocusRequester() }
+                            LaunchedEffect(Unit) { descFocus.requestFocus() }
+                            Text(
+                                text = displayDescription,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = NuvioColors.TextPrimary,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(max = 420.dp)
+                                    .verticalScroll(descScroll)
+                                    .focusRequester(descFocus)
+                                    .focusable()
+                            )
+                        }
                     }
 
                     MetaInfoRow(
