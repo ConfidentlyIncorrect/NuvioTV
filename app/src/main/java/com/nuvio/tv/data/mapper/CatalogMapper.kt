@@ -2,6 +2,7 @@ package com.nuvio.tv.data.mapper
 
 import com.nuvio.tv.data.remote.dto.MetaPreviewDto
 import com.nuvio.tv.domain.model.ContentType
+import com.nuvio.tv.domain.model.EpgEntry
 import com.nuvio.tv.domain.model.MetaPreview
 import com.nuvio.tv.domain.model.PosterShape
 
@@ -32,6 +33,7 @@ fun MetaPreviewDto.toDomain(): MetaPreview {
         links = links?.mapNotNull { it.toDomain() } ?: emptyList(),
         behaviorHints = mapBehaviorHints(behaviorHints),
         trailers = mapTrailers(trailers, trailerStreams),
-        trailerYtIds = collectTrailerYtIds(trailers, trailerStreams)
+        trailerYtIds = collectTrailerYtIds(trailers, trailerStreams),
+        epgSchedule = epgSchedule?.map { EpgEntry(s = it.s, e = it.e, t = it.t, d = it.d) }
     )
 }

@@ -18,6 +18,8 @@ data class MetaPreviewDto(
     @Json(name = "background") val background: String? = null,
     @Json(name = "logo") val logo: String? = null,
     @Json(name = "description") val description: String? = null,
+    // usa-tv-next: live guide window so the home hero recomputes NOW/NEXT on a clock (no stale grid).
+    @Json(name = "epgSchedule") val epgSchedule: List<EpgEntryDto>? = null,
     @Json(name = "releaseInfo") val releaseInfo: String? = null,
     @Json(name = "imdbRating") val imdbRating: String? = null,
     @Json(name = "genres") val genres: List<String>? = null,

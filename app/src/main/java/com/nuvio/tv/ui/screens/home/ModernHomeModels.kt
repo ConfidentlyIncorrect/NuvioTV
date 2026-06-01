@@ -59,7 +59,9 @@ data class HeroPreview(
      *  even after navigation away and back. */
     val frozenBackdropUrl: String? = null,
     /** Same idea for the logo URL. */
-    val frozenLogoUrl: String? = null
+    val frozenLogoUrl: String? = null,
+    /** usa-tv-next: live guide window so the hero recomputes NOW/NEXT on a clock. */
+    val epgSchedule: List<com.nuvio.tv.domain.model.EpgEntry>? = null
 )
 
 @Immutable
@@ -479,7 +481,8 @@ internal fun buildCatalogItem(
             item.poster ?: item.backdropUrl
         },
         frozenBackdropUrl = frozenBackdrop,
-        frozenLogoUrl = frozenLogo
+        frozenLogoUrl = frozenLogo,
+        epgSchedule = item.epgSchedule
     )
 
     return ModernCarouselItem(

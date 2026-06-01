@@ -25,6 +25,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import com.nuvio.tv.core.util.EpgGuide
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -595,7 +596,21 @@ private fun HeroTitleContent(
             }
         }
 
-        preview.description?.takeIf { it.isNotBlank() }?.let { description ->
+        // usa-tv-next: when the focused item carries a live guide window, recompute NOW/NEXT on a
+        // 30s clock so the hero blurb stays current even though the catalog/home rows are cached.
+        // Falls back to the baked description for everything else. One ticker for the focused item
+        // (the hero shows one at a time), so this is cheap.
+        var heroNowMs by remember { mutableStateOf(System.currentTimeMillis()) }
+        LaunchedEffect(Unit) {
+            while (true) {
+                heroNowMs = System.currentTimeMillis()
+                kotlinx.coroutines.delay(30_000L)
+            }
+        }
+        val heroDescription = if (!preview.epgSchedule.isNullOrEmpty()) {
+            EpgGuide.buildNowNext(preview.epgSchedule, heroNowMs) ?: preview.description
+        } else preview.description
+        heroDescription?.takeIf { it.isNotBlank() }?.let { description ->
             Text(
                 text = description,
                 style = scaledDescriptionStyle,
