@@ -1101,6 +1101,26 @@ internal fun PlayerRuntimeController.initializePlayer(
                             return
                         }
 
+                        // Container parse failure UNDER the forked DV Matroska extractor (e.g.
+                        // "No valid varint length mask found" on certain MKV block structures). It's
+                        // not a decoder failure, so the branch above doesn't catch it. Fall back to the
+                        // STOCK extractor for this stream (DV off) and retry ONCE — the stock Matroska
+                        // extractor parses these files fine. Gated to the DV-converter path and deduped
+                        // by url, so genuinely-corrupt files (or non-DV playback) aren't looped.
+                        if (error.errorCode == PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED &&
+                            isExperimentalDv7ToDv81ActiveForCurrentPlayback &&
+                            !dv7ToHevcForcedStreamUrls.contains(currentStreamUrl)
+                        ) {
+                            Log.i(
+                                PlayerRuntimeController.TAG,
+                                "DV_MKV_PARSE_FALLBACK: container parse failed under the DV extractor; " +
+                                        "retrying with the stock extractor host=${currentStreamUrl.safeHost()}"
+                            )
+                            dv7ToHevcForcedStreamUrls.add(currentStreamUrl)
+                            retryCurrentStreamWithDolbyVisionFallback(currentPosition)
+                            return
+                        }
+
                         if (error.isAudioTrackInitializationFailure()) {
                             if (!isSafeAudioModeActiveForCurrentPlayback) {
                                 safeAudioForcedStreamUrls.add(currentStreamUrl)
