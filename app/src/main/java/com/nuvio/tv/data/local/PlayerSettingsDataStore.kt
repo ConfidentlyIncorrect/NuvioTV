@@ -156,10 +156,14 @@ data class BufferSettings(
     val retainBackBufferFromKeyframe: Boolean = false
 ) {
     companion object {
-        const val DEFAULT_MIN_BUFFER_MS = 15_000
+        const val DEFAULT_MIN_BUFFER_MS = 20_000
         const val DEFAULT_MAX_BUFFER_MS = 45_000
         const val DEFAULT_BUFFER_FOR_PLAYBACK_MS = 5_000
-        const val DEFAULT_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS = 3_000
+        // After a rebuffer, fill this much before resuming. The old 3s resumed too thin on live
+        // HLS over the proxy — a single slow segment re-stalled almost immediately, producing the
+        // stutter "sprees" (and letting the live window slide past us -> the BEHIND_LIVE recovery
+        // firing repeatedly). 8s gives enough cushion to ride out a slow segment. Must be <= min.
+        const val DEFAULT_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS = 8_000
         const val DEFAULT_TARGET_BUFFER_SIZE_MB: Int = 150
         // Media3 reserves additional bytes for back buffer as a fraction of
         // targetBufferBytes. 15s default keeps peak heap within Fire TV class
@@ -552,6 +556,8 @@ class PlayerSettingsDataStore @Inject constructor(
     private val migrationAfterRebufferLoweredDoneKey = booleanPreferencesKey("migration_after_rebuffer_lowered_done")
     private val migrationBackBufferDurationReducedDoneKey = booleanPreferencesKey("migration_back_buffer_duration_reduced_done")
     private val migrationTargetBufferSizeReducedDoneKey = booleanPreferencesKey("migration_target_buffer_size_reduced_done")
+    private val migrationAfterRebufferRaisedDoneKey = booleanPreferencesKey("migration_after_rebuffer_raised_done")
+    private val migrationMinBufferRaisedDoneKey = booleanPreferencesKey("migration_min_buffer_raised_done")
     init {
         ioScope.launch {
             profileManager.activeProfileId.collect { pid ->
@@ -679,6 +685,30 @@ class PlayerSettingsDataStore @Inject constructor(
                         prefs[targetBufferSizeMbKey] = BufferSettings.DEFAULT_TARGET_BUFFER_SIZE_MB
                     }
                     prefs[migrationTargetBufferSizeReducedDoneKey] = true
+                }
+
+                // After-rebuffer threshold RAISED from the prior 3s default. 3s resumed too thin on
+                // live HLS over the proxy — a single slow segment re-stalled almost immediately,
+                // producing the stutter "sprees" (and letting the live window slide past us, so the
+                // BEHIND_LIVE_WINDOW recovery fired repeatedly). Bump users still on that default
+                // (or unset) to the new default; manual customizations are left alone.
+                val afterRebufferRaised = prefs[migrationAfterRebufferRaisedDoneKey] ?: false
+                if (!afterRebufferRaised) {
+                    val currentAfter = prefs[bufferForPlaybackAfterRebufferMsKey]
+                    if (currentAfter == null || currentAfter == 3_000) {
+                        prefs[bufferForPlaybackAfterRebufferMsKey] = BufferSettings.DEFAULT_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS
+                    }
+                    prefs[migrationAfterRebufferRaisedDoneKey] = true
+                }
+
+                // Min buffer RAISED from the prior 15s default for more network-hiccup cushion.
+                val minBufferRaised = prefs[migrationMinBufferRaisedDoneKey] ?: false
+                if (!minBufferRaised) {
+                    val currentMin = prefs[minBufferMsKey]
+                    if (currentMin == null || currentMin == 15_000) {
+                        prefs[minBufferMsKey] = BufferSettings.DEFAULT_MIN_BUFFER_MS
+                    }
+                    prefs[migrationMinBufferRaisedDoneKey] = true
                 }
 
                 val min = prefs[minBufferMsKey]
