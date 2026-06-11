@@ -33,8 +33,9 @@ data class MetaPreview(
     val trailers: List<MetaTrailer> = emptyList(),
     val trailerYtIds: List<String> = emptyList(),
     val seasonCount: Int? = null,
+    val voteCount: Int? = null,
     // usa-tv-next: live guide window for the home hero (recompute NOW/NEXT on a clock). Null otherwise.
-    val epgSchedule: List<EpgEntry>? = null
+    val epgSchedule: List<EpgEntry>? = null,
 ) {
     val apiType: String
         get() = type.toApiString(rawType)

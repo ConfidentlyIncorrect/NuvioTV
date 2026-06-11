@@ -18,6 +18,7 @@ import com.nuvio.tv.domain.model.enabledAddons
 import com.nuvio.tv.ui.components.SourceChipItem
 import com.nuvio.tv.ui.components.SourceChipStatus
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.firstOrNull
@@ -27,6 +28,71 @@ import kotlinx.coroutines.withTimeoutOrNull
 
 /** Hard ceiling for next-episode stream search to prevent hanging forever. */
 private const val NEXT_EPISODE_HARD_TIMEOUT_MS = 120_000L
+
+/**
+ * Schedules incremental badge matching for source streams in the background.
+ * Only processes addon groups not yet badged, emits UI update every 5 streams.
+ */
+internal fun PlayerRuntimeController.scheduleSourceBadgeApplication() {
+    val state = _uiState.value
+    val newAddons = state.sourceAvailableAddons.filter { it !in sourceBadgedAddonNames }
+    if (newAddons.isEmpty()) return
+
+    sourceBadgeJob = scope.launch(kotlinx.coroutines.Dispatchers.Default) {
+        val allNewStreams = newAddons.flatMap { addonName ->
+            _uiState.value.sourceAllStreams.filter { it.addonName == addonName }
+        }
+        if (allNewStreams.isEmpty()) {
+            sourceBadgedAddonNames = sourceBadgedAddonNames + newAddons.toSet()
+            return@launch
+        }
+        val chunks = allNewStreams.chunked(5)
+        for (chunk in chunks) {
+            val chunkGroup = com.nuvio.tv.domain.model.AddonStreams(addonName = "", addonLogo = null, streams = chunk)
+            val badgedChunk = streamBadgePresentation.apply(listOf(chunkGroup))
+                .firstOrNull()?.streams ?: chunk
+            val badgedByKey = badgedChunk.associateBy { it.sourceBadgeMergeKey() }
+            _uiState.update { current ->
+                val updatedAll = current.sourceAllStreams.map { s ->
+                    badgedByKey[s.sourceBadgeMergeKey()] ?: s
+                }
+                val selectedAddon = current.sourceSelectedAddonFilter
+                current.copy(
+                    sourceAllStreams = updatedAll,
+                    sourceFilteredStreams = updatedAll.filterByAddon(selectedAddon)
+                )
+            }
+            val coveredAddons = chunk.map { it.addonName }.toSet()
+            sourceBadgedAddonNames = sourceBadgedAddonNames + coveredAddons
+        }
+    }
+}
+
+/**
+ * Schedules badge matching for episode streams in the background.
+ */
+internal fun PlayerRuntimeController.scheduleEpisodeBadgeApplication() {
+    episodeBadgeJob?.cancel()
+    episodeBadgeJob = scope.launch(kotlinx.coroutines.Dispatchers.Default) {
+        val streams = _uiState.value.episodeAllStreams
+        if (streams.isEmpty()) return@launch
+        val group = com.nuvio.tv.domain.model.AddonStreams(addonName = "", addonLogo = null, streams = streams)
+        val badged = streamBadgePresentation.apply(listOf(group))
+        val badgedStreams = badged.flatMap { it.streams }
+        if (badgedStreams == streams) return@launch
+        _uiState.update { current ->
+            val selectedAddon = current.episodeSelectedAddonFilter
+            current.copy(
+                episodeAllStreams = badgedStreams,
+                episodeFilteredStreams = if (selectedAddon == null) badgedStreams else badgedStreams.filter { it.addonName == selectedAddon }
+            )
+        }
+    }
+}
+
+private fun Stream.sourceBadgeMergeKey(): String =
+    infoHash?.lowercase()?.let { "$addonName|$it:${fileIdx ?: ""}" }
+        ?: "$addonName|${getStreamUrl() ?: "${name}:${title}"}"
 
 internal fun PlayerRuntimeController.showEpisodesPanel() {
     _uiState.update {
@@ -97,18 +163,27 @@ internal fun PlayerRuntimeController.loadSourceStreams(forceRefresh: Boolean) {
     val requestKey = buildSourceRequestKey(type = type, videoId = vid, season = seasonArg, episode = episodeArg)
     val state = _uiState.value
     val hasCachedPayload = state.sourceAllStreams.isNotEmpty() || state.sourceStreamsError != null
-    if (!forceRefresh && requestKey == sourceStreamsCacheRequestKey && hasCachedPayload) {
+
+    // Fully completed cache hit — nothing to do
+    if (!forceRefresh && requestKey == sourceStreamsCacheRequestKey && hasCachedPayload && sourceStreamsFetchCompleted) {
         return
     }
+    // Already loading the same request — don't restart
     if (!forceRefresh && state.isLoadingSourceStreams && requestKey == sourceStreamsCacheRequestKey) {
         return
     }
 
     val targetChanged = requestKey != sourceStreamsCacheRequestKey
-    sourceStreamsJob?.cancel()
+    val isResume = !forceRefresh && !targetChanged && requestKey == sourceStreamsCacheRequestKey && hasCachedPayload && !sourceStreamsFetchCompleted
+    sourceStreamsScope?.cancel()
+    sourceStreamsJob = null
+    val newScope = kotlinx.coroutines.CoroutineScope(scope.coroutineContext + kotlinx.coroutines.SupervisorJob())
+    sourceStreamsScope = newScope
     sourceChipErrorDismissJob?.cancel()
-    sourceStreamsJob = scope.launch {
+    sourceStreamsJob = newScope.launch {
         sourceStreamsCacheRequestKey = requestKey
+        sourceStreamsFetchCompleted = false
+        if (forceRefresh || targetChanged) sourceBadgedAddonNames = emptySet()
         _uiState.update {
             it.copy(
                 isLoadingSourceStreams = true,
@@ -125,7 +200,11 @@ internal fun PlayerRuntimeController.loadSourceStreams(forceRefresh: Boolean) {
         val installedAddonOrder = installedAddons.map { it.displayName }
         val installedAddonNames = installedAddonOrder.toSet()
         var debridPreparationLaunched = false
-        updateSourceChipsForFetchStart(type, vid, installedAddons)
+
+        // On resume, skip chip reset — keep existing chip statuses
+        if (!isResume) {
+            updateSourceChipsForFetchStart(type, vid, installedAddons)
+        }
 
         streamRepository.getStreamsFromAllAddons(
             type = type,
@@ -139,20 +218,43 @@ internal fun PlayerRuntimeController.loadSourceStreams(forceRefresh: Boolean) {
                     val allStreams = addonStreams.flatMap { it.streams }
                     val availableAddons = addonStreams.map { it.addonName }
                     _uiState.update {
+                        // On resume, merge fresh results with any previously cached streams
+                        val mergedAllStreams = if (isResume && it.sourceAllStreams.isNotEmpty()) {
+                            mergeSourceStreams(it.sourceAllStreams, allStreams)
+                        } else {
+                            allStreams
+                        }
+                        // Preserve badges already computed by prior badge jobs
+                        val existingBadged = it.sourceAllStreams
+                            .filter { s -> s.badges.isNotEmpty() }
+                            .associateBy { s -> s.sourceBadgeMergeKey() }
+                        val badgePreserved = if (existingBadged.isEmpty()) {
+                            mergedAllStreams
+                        } else {
+                            mergedAllStreams.map { s ->
+                                val existing = existingBadged[s.sourceBadgeMergeKey()]
+                                if (existing != null && s.badges.isEmpty()) s.copy(badges = existing.badges) else s
+                            }
+                        }
+                        val mergedAvailableAddons = if (isResume && it.sourceAvailableAddons.isNotEmpty()) {
+                            (it.sourceAvailableAddons + availableAddons).distinct()
+                        } else {
+                            availableAddons
+                        }
                         val selectedAddon = it.sourceSelectedAddonFilter?.takeIf { selected ->
-                            selected in availableAddons
+                            selected in mergedAvailableAddons
                         }
                         val filteredStreams = if (selectedAddon == null) {
-                            allStreams
+                            badgePreserved
                         } else {
-                            allStreams.filter { stream -> stream.addonName == selectedAddon }
+                            badgePreserved.filter { stream -> stream.addonName == selectedAddon }
                         }
                         it.copy(
                             isLoadingSourceStreams = false,
-                            sourceAllStreams = allStreams,
+                            sourceAllStreams = badgePreserved,
                             sourceSelectedAddonFilter = selectedAddon,
                             sourceFilteredStreams = filteredStreams,
-                            sourceAvailableAddons = availableAddons,
+                            sourceAvailableAddons = mergedAvailableAddons,
                             sourceChips = mergeSourceChipStatuses(
                                 existing = it.sourceChips,
                                 succeededNames = addonStreams.map { group -> group.addonName }
@@ -167,6 +269,7 @@ internal fun PlayerRuntimeController.loadSourceStreams(forceRefresh: Boolean) {
                         episode = episodeArg,
                         installedAddonNames = installedAddonNames,
                     ) { debridPreparationLaunched = true }
+                    scheduleSourceBadgeApplication()
                 }
 
                 is NetworkResult.Error -> {
@@ -183,9 +286,25 @@ internal fun PlayerRuntimeController.loadSourceStreams(forceRefresh: Boolean) {
                 }
             }
         }
+        sourceStreamsFetchCompleted = true
         markRemainingSourceChipsAsError()
     }
 }
+
+/**
+ * Merge fresh stream results with previously cached streams.
+ * Newer entries for the same stream (matched by addon + url/infoHash) replace older ones.
+ */
+private fun mergeSourceStreams(cached: List<Stream>, fresh: List<Stream>): List<Stream> {
+    val merged = LinkedHashMap<String, Stream>()
+    cached.forEach { stream -> merged[stream.mergeKey()] = stream }
+    fresh.forEach { stream -> merged[stream.mergeKey()] = stream }
+    return merged.values.toList()
+}
+
+private fun Stream.mergeKey(): String =
+    infoHash?.lowercase()?.let { hash -> "$addonName|$hash:${fileIdx ?: ""}" }
+        ?: "$addonName|${getStreamUrl() ?: externalUrl ?: ytId ?: "${name}:${title}"}"
 
 private fun PlayerRuntimeController.launchSourceDebridPreparationIfNeeded(
     launched: Boolean,
@@ -236,14 +355,16 @@ private fun PlayerRuntimeController.replacePreparedSourceStream(
 }
 
 internal fun PlayerRuntimeController.dismissSourcesPanel() {
+    sourceStreamsScope?.cancel()
+    sourceStreamsScope = null
+    sourceStreamsJob = null
+    sourceChipErrorDismissJob?.cancel()
     _uiState.update {
         it.copy(
             showSourcesPanel = false,
-            isLoadingSourceStreams = false,
-            sourceChips = emptyList()
+            isLoadingSourceStreams = false
         )
     }
-    sourceChipErrorDismissJob?.cancel()
     scheduleHideControls()
 }
 
@@ -434,7 +555,9 @@ private fun PlayerRuntimeController.persistSelectedStreamForReuse(
             filename = currentFilename,
             videoHash = currentVideoHash,
             videoSize = currentVideoSize,
-            bingeGroup = stream.behaviorHints?.bingeGroup
+            bingeGroup = stream.behaviorHints?.bingeGroup,
+            contentLanguage = contentLanguage,
+            year = year
         )
     }
 }
@@ -459,7 +582,9 @@ private fun PlayerRuntimeController.persistTorrentStreamForReuse(stream: Stream)
             infoHash = infoHash,
             fileIdx = stream.fileIdx,
             sources = stream.sources,
-            bingeGroup = stream.behaviorHints?.bingeGroup
+            bingeGroup = stream.behaviorHints?.bingeGroup,
+            contentLanguage = contentLanguage,
+            year = year
         )
     }
 }
@@ -520,6 +645,9 @@ private fun PlayerRuntimeController.openExternalStreamInBrowser(
 
 @androidx.annotation.OptIn(UnstableApi::class)
 internal fun PlayerRuntimeController.switchToSourceStream(stream: Stream) {
+    sourceStreamsScope?.cancel()
+    sourceStreamsScope = null
+    sourceStreamsJob = null
     if (openExternalStreamInBrowser(stream = stream, fromEpisodePanel = false)) {
         return
     }
@@ -660,6 +788,9 @@ internal fun PlayerRuntimeController.switchToSourceStream(stream: Stream) {
 }
 
 internal fun PlayerRuntimeController.dismissEpisodesPanel() {
+    episodeStreamsScope?.cancel()
+    episodeStreamsScope = null
+    episodeStreamsJob = null
     _uiState.update {
         it.copy(
             showEpisodesPanel = false,
@@ -692,6 +823,9 @@ internal fun PlayerRuntimeController.selectEpisodesSeason(season: Int) {
 @androidx.annotation.OptIn(UnstableApi::class)
 private fun PlayerRuntimeController.switchToTorrentSourceStream(stream: Stream) {
     val infoHash = stream.infoHash ?: return
+    sourceStreamsScope?.cancel()
+    sourceStreamsScope = null
+    sourceStreamsJob = null
     stopTorrentStream()
     nextEpisodeAutoPlayJob?.cancel()
     nextEpisodeAutoPlayJob = null
@@ -839,8 +973,12 @@ internal fun PlayerRuntimeController.loadStreamsForEpisode(video: Video, forceRe
     }
 
     val targetChanged = requestKey != episodeStreamsCacheRequestKey
-    episodeStreamsJob?.cancel()
-    episodeStreamsJob = scope.launch {
+    episodeStreamsScope?.cancel()
+    episodeStreamsScope = null
+    episodeStreamsJob = null
+    val newScope = kotlinx.coroutines.CoroutineScope(scope.coroutineContext + kotlinx.coroutines.SupervisorJob())
+    episodeStreamsScope = newScope
+    episodeStreamsJob = newScope.launch {
         episodeStreamsCacheRequestKey = requestKey
         val previousAddonFilter = _uiState.value.episodeSelectedAddonFilter
         _uiState.update {
@@ -898,6 +1036,7 @@ internal fun PlayerRuntimeController.loadStreamsForEpisode(video: Video, forceRe
                         episode = video.episode,
                         installedAddonNames = installedAddonNames,
                     ) { debridPreparationLaunched = true }
+                    scheduleEpisodeBadgeApplication()
                 }
 
                 is NetworkResult.Error -> {
@@ -1086,6 +1225,10 @@ internal fun PlayerRuntimeController.switchToEpisodeStream(
 
     flushPlaybackSnapshotForSwitchOrExit()
 
+    // Pause current playback immediately so the old stream doesn't continue
+    // playing audio/video in the background while the new episode is being prepared.
+    _exoPlayer?.stop()
+
     val newHeaders = PlayerMediaSourceFactory.sanitizeHeaders(
         stream.behaviorHints?.proxyHeaders?.request
     )
@@ -1152,7 +1295,7 @@ internal fun PlayerRuntimeController.switchToEpisodeStream(
             activeSkipInterval = null,
             skipIntervalDismissed = false,
             postPlayMode = null,
-            postPlayDismissedForCurrentEpisode = false,
+            postPlayDismissedForCurrentEpisode = true,
             playbackEnded = false,
         )
     }
@@ -1183,6 +1326,9 @@ private fun PlayerRuntimeController.switchToEpisodeStreamCommon(
     stream: Stream,
     forcedTargetVideo: Video? = null
 ) {
+    episodeStreamsScope?.cancel()
+    episodeStreamsScope = null
+    episodeStreamsJob = null
     nextEpisodeAutoPlayJob?.cancel()
     nextEpisodeAutoPlayJob = null
     stillWatchingPromptJob?.cancel()
@@ -1243,7 +1389,7 @@ private fun PlayerRuntimeController.switchToEpisodeStreamCommon(
             activeSkipInterval = null,
             skipIntervalDismissed = false,
             postPlayMode = null,
-            postPlayDismissedForCurrentEpisode = false,
+            postPlayDismissedForCurrentEpisode = true,
             playbackEnded = false,
         )
     }
@@ -1318,7 +1464,6 @@ internal fun PlayerRuntimeController.playNextEpisode(userInitiated: Boolean = fa
                 nextEpisode = episodeForMode,
                 searching = true,
             ),
-            postPlayDismissedForCurrentEpisode = false,
         )
     }
 
@@ -1529,7 +1674,6 @@ internal fun PlayerRuntimeController.playNextEpisode(userInitiated: Boolean = fa
                                 sourceName = sourceName,
                                 countdownSec = remaining,
                             ),
-                            postPlayDismissedForCurrentEpisode = false,
                         )
                     }
                     delay(1000)
