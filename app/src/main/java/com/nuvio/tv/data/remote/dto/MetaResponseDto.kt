@@ -26,6 +26,7 @@ data class MetaDto(
     @Json(name = "status") val status: String? = null,
     @Json(name = "imdbRating") val imdbRating: String? = null,
     @Json(name = "imdb_id") val imdbId: String? = null,
+    @Json(name = "tvdb_id") val tvdbId: Int? = null,
     @Json(name = "slug") val slug: String? = null,
     @Json(name = "genres") val genres: List<String>? = null,
     @Json(name = "runtime") val runtime: String? = null,

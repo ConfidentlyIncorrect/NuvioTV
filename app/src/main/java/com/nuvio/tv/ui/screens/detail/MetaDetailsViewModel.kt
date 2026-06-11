@@ -75,6 +75,8 @@ class MetaDetailsViewModel @Inject constructor(
     private val tmdbSettingsDataStore: TmdbSettingsDataStore,
     private val tmdbService: TmdbService,
     private val tmdbMetadataService: TmdbMetadataService,
+    private val dupeTitleResolver: com.nuvio.tv.core.tmdb.DupeTitleResolver,
+    private val tvdbMetadataService: com.nuvio.tv.core.tvdb.TvdbMetadataService,
     private val imdbEpisodeRatingsRepository: ImdbEpisodeRatingsRepository,
     private val mdbListRepository: MDBListRepository,
     private val libraryRepository: LibraryRepository,
@@ -1259,17 +1261,45 @@ class MetaDetailsViewModel @Inject constructor(
     }
 
     private suspend fun enrichMeta(meta: Meta): Meta {
+        val isSeries = meta.apiType in listOf("series", "tv")
+        // ---- Cinemeta "#DUPE#" reconstruction via TheTVDB (keyless) ----
+        // Cinemeta leaves these half-deduped entries named "#DUPE#" with a dead IMDb id but a valid
+        // tvdb_id. The detail meta can even be served by a different addon that masks the dupe (it
+        // shows the canonical entry, e.g. "Mayday", with no marker/tvdb_id), so we re-fetch the entry
+        // straight from Cinemeta to recover the real dupe, then overlay TheTVDB's authoritative name
+        // + year. Episodes come from the dupe's own (correct, thumbnailed) Cinemeta videos, with
+        // TheTVDB's tree as a fallback. This fixes corrupted data, not localizes — it runs before and
+        // overrides the TMDB enrichment below.
+        val reconstruction = if (isSeries) reconstructDupeFromTvdb(meta) else null
+        val isDupe = reconstruction != null
+        val reconstructed = reconstruction ?: meta
+
+        // Stylized-title fallback: when the entry arrives without a clearlogo (common for movies via
+        // some meta addons — they then render as plain text), point at metahub's logo by IMDb id so
+        // the hero shows the title-treatment image. The hero AsyncImage falls back to plain text on
+        // error, so a metahub 404 degrades gracefully. Done before the early-return so it applies
+        // even when TMDB enrichment is disabled.
+        val baseMeta = if (reconstructed.logo.isNullOrBlank()) {
+            val imdb = (reconstructed.imdbId ?: reconstructed.id).takeIf { it.startsWith("tt") }
+            if (imdb != null) {
+                reconstructed.copy(logo = "https://images.metahub.space/logo/medium/$imdb/img")
+            } else reconstructed
+        } else reconstructed
+
         val settings = tmdbSettingsDataStore.settings.first()
-        if (!settings.enabled) return meta
+        if (!settings.enabled) return baseMeta
 
         val tmdbContentType = resolveTmdbContentType(meta)
         val tmdbLookupType = tmdbContentType.toApiString()
         val tmdbId = tmdbService.ensureTmdbId(meta.id, tmdbLookupType)
             ?: tmdbService.ensureTmdbId(itemId, itemType)
-            ?: return meta
+            ?: return baseMeta
 
-        val isSeries = meta.apiType in listOf("series", "tv")
-        val needsEpisodes = settings.useEpisodes && isSeries
+        // Skip TMDB episode enrichment for reconstructed #DUPE# entries: they were de-duped to a
+        // DIFFERENT show whose season/episode numbering won't line up, so enriching overwrites the
+        // correct episodes with mismatched/blank TMDB data (the "no name, no thumbnail, all dated
+        // <placeholder>" symptom). Keep the reconstructed episodes instead.
+        val needsEpisodes = settings.useEpisodes && isSeries && !isDupe
 
         // Fetch main enrichment and episode enrichment in parallel.
         val (enrichment, episodeMap) = coroutineScope {
@@ -1282,7 +1312,7 @@ class MetaDetailsViewModel @Inject constructor(
             }
             val episodes = if (needsEpisodes) {
                 async(Dispatchers.IO) {
-                    val seasonNumbers = meta.videos.mapNotNull { it.season }.distinct()
+                    val seasonNumbers = baseMeta.videos.mapNotNull { it.season }.distinct()
                     tmdbMetadataService.fetchEpisodeEnrichment(
                         tmdbId = tmdbId,
                         seasonNumbers = seasonNumbers,
@@ -1293,9 +1323,11 @@ class MetaDetailsViewModel @Inject constructor(
             main.await() to episodes?.await()
         }
 
-        var updated = meta
+        var updated = baseMeta
 
-        if (enrichment != null && settings.useArtwork) {
+        if (enrichment != null && settings.useArtwork && !isDupe) {
+            // Skip for reconstructed #DUPE# entries: TMDB resolves to the canonical show, whose LOGO
+            // image renders the wrong wordmark (e.g. "Mayday"). Keep the dupe's own correct artwork.
             updated = updated.copy(
                 background = enrichment.backdrop ?: updated.background,
                 logo = enrichment.logo ?: updated.logo
@@ -1304,10 +1336,11 @@ class MetaDetailsViewModel @Inject constructor(
 
         if (enrichment != null && settings.useBasicInfo) {
             updated = updated.copy(
-                name = enrichment.localizedTitle ?: updated.name,
+                // Don't let TMDB's primary title re-clobber a reconstructed #DUPE# name (keep TheTVDB's).
+                name = if (isDupe) updated.name else (enrichment.localizedTitle ?: updated.name),
                 description = enrichment.description ?: updated.description
             )
-            if (enrichment.genres.isNotEmpty()) {
+            if (enrichment.genres.isNotEmpty() && !isDupe) {
                 updated = updated.copy(genres = enrichment.genres)
             }
         }
@@ -1317,7 +1350,10 @@ class MetaDetailsViewModel @Inject constructor(
             _uiState.update { it.copy(tmdbRating = enrichment.rating.toFloat()) }
         }
 
-        if (enrichment != null && settings.useDetails) {
+        if (enrichment != null && settings.useDetails && !isDupe) {
+            // Skip for reconstructed #DUPE# entries: TMDB resolves to the canonical show, so its
+            // country/status/language/runtime are wrong (e.g. country "Canada" for US "Air Disasters").
+            // Keep the TheTVDB regional facts set in the reconstruction.
             updated = updated.copy(
                 runtime = enrichment.runtimeMinutes?.toString() ?: updated.runtime,
                 status = enrichment.status ?: updated.status,
@@ -1329,7 +1365,9 @@ class MetaDetailsViewModel @Inject constructor(
 
         if (enrichment != null && settings.useReleaseDates) {
             updated = updated.copy(
-                releaseInfo = enrichment.releaseInfo ?: updated.releaseInfo
+                // For reconstructed #DUPE# entries keep TheTVDB's year — TMDB's enrichment is the
+                // canonical (wrong) show and would put the year back to e.g. 2003 (Mayday).
+                releaseInfo = if (isDupe) updated.releaseInfo else (enrichment.releaseInfo ?: updated.releaseInfo)
             )
         }
 
@@ -1380,12 +1418,16 @@ class MetaDetailsViewModel @Inject constructor(
                 videos = meta.videos.map { video ->
                     val key = if (video.season != null && video.episode != null) video.season to video.episode else null
                     val ep = key?.let { episodeMap[it] }
+                    // Never let a BLANK TMDB field override good Cinemeta data — use takeIf(isNotBlank)
+                    // rather than a bare ?: (an empty "" string is non-null and would otherwise win,
+                    // blanking the episode title/thumbnail/date).
                     video.copy(
-                        title = ep?.title ?: video.title,
-                        overview = ep?.overview ?: video.overview,
-                        released = if (settings.useReleaseDates) ep?.airDate ?: video.released else video.released,
-                        thumbnail = ep?.thumbnail ?: video.thumbnail,
-                        runtime = ep?.runtimeMinutes
+                        title = ep?.title?.takeIf { it.isNotBlank() } ?: video.title,
+                        overview = ep?.overview?.takeIf { it.isNotBlank() } ?: video.overview,
+                        released = if (settings.useReleaseDates)
+                            ep?.airDate?.takeIf { it.isNotBlank() } ?: video.released else video.released,
+                        thumbnail = ep?.thumbnail?.takeIf { it.isNotBlank() } ?: video.thumbnail,
+                        runtime = ep?.runtimeMinutes ?: video.runtime
                     )
                 }
             )
@@ -1396,6 +1438,75 @@ class MetaDetailsViewModel @Inject constructor(
         }
 
         return updated
+    }
+
+    /**
+     * Rebuild a Cinemeta "#DUPE#" series from authoritative TheTVDB metadata, or null if [meta] is
+     * not a dupe. The dupe's real entry (correct art + episodes + tvdb_id) is taken from Cinemeta —
+     * either [meta] itself when it's already the dupe, or re-fetched from Cinemeta when a different
+     * meta addon masked it — and we overlay TheTVDB's name + year. Episodes prefer the dupe's own
+     * (thumbnailed) Cinemeta videos; TheTVDB's tree is a fallback if those are somehow empty.
+     */
+    private suspend fun reconstructDupeFromTvdb(meta: Meta): Meta? {
+        val id = meta.id
+        if (!id.startsWith("tt")) return null  // Cinemeta dupes are IMDb-id'd
+        val cinemetaBase = preferredAddonBaseUrl
+            ?.takeIf { it.isNotBlank() && it.contains("cinemeta", ignoreCase = true) }
+            ?: "https://v3-cinemeta.strem.io"
+
+        val dupeMeta: Meta = if (
+            com.nuvio.tv.core.tmdb.DupeTitleResolver.isDupeMarker(meta.name, meta.slug) && meta.tvdbId != null
+        ) {
+            meta
+        } else {
+            dupeTitleResolver.cinemetaDupeMeta(cinemetaBase, meta.apiType, id) ?: return null
+        }
+
+        val tvdb = tvdbMetadataService.fetchSeries(dupeMeta.tvdbId) ?: return null
+        val name = tvdb.name?.takeIf { it.isNotBlank() && it != "#DUPE#" } ?: return null
+
+        val background = tvdb.background ?: dupeMeta.background
+        // TheTVDB episode tree keyed by (season, episode) — for thumbnails + a fallback episode list.
+        val tvdbBySe = tvdb.episodes.associateBy { it.season to it.episode }
+
+        // Cinemeta's dupe episode thumbnails point at episodes.metahub.space/<deadImdbId>/... which
+        // 404 (the dupe's IMDb id is merged away), so they render blank. Re-point each episode to its
+        // TheTVDB screenshot; where TheTVDB has none, fall back to the series hero backdrop.
+        val videos = dupeMeta.videos.ifEmpty {
+            tvdb.episodes.map { ep ->
+                com.nuvio.tv.domain.model.Video(
+                    id = "${dupeMeta.id}:${ep.season}:${ep.episode}",
+                    title = ep.title ?: "Episode ${ep.episode}",
+                    released = ep.airDateIso,
+                    thumbnail = null,
+                    streams = emptyList(),
+                    season = ep.season,
+                    episode = ep.episode,
+                    overview = null
+                )
+            }
+        }.map { video ->
+            val tvdbThumb = (video.season to video.episode).let { tvdbBySe[it]?.thumbnail }
+            video.copy(thumbnail = tvdbThumb ?: background)
+        }
+
+        return dupeMeta.copy(
+            name = name,
+            releaseInfo = tvdb.year?.toString() ?: dupeMeta.releaseInfo,
+            // Prefer TheTVDB's CURRENT artwork — Cinemeta's dupe art is often the stale pre-2019 set.
+            // Keep the dupe's logo (its wordmark is correct; TheTVDB has none here).
+            poster = tvdb.poster ?: dupeMeta.poster,
+            rawPosterUrl = tvdb.poster ?: dupeMeta.rawPosterUrl,
+            background = background,
+            // TheTVDB's regional facts (the dupe's Cinemeta meta leaks the canonical show's — e.g.
+            // country "Canada" for the US Smithsonian "Air Disasters").
+            country = tvdb.country ?: dupeMeta.country,
+            language = tvdb.language ?: dupeMeta.language,
+            status = tvdb.status ?: dupeMeta.status,
+            runtime = tvdb.runtimeMinutes?.let { "$it min" } ?: dupeMeta.runtime,
+            genres = tvdb.genres.ifEmpty { dupeMeta.genres },
+            videos = videos
+        )
     }
 
     private fun resolveTmdbContentType(meta: Meta): ContentType {

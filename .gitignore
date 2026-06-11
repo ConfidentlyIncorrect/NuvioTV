@@ -20,6 +20,8 @@ local.properties
 libass-android
 Stremio addons refer
 nuviotv.jks
+# Built / sideloaded APKs (never commit binaries)
+*.apk
 CLAUDE.md
 build_and_install.sh
 android-tv-samples

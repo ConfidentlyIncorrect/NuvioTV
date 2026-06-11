@@ -232,6 +232,22 @@ object NetworkModule {
             .addConverterFactory(MoshiConverterFactory.create(moshi))
             .build()
 
+    // Keyless TheTVDB website client (recovers #DUPE# titles via the by-id dereferrer page <title>).
+    @Provides
+    @Singleton
+    @Named("tvdb")
+    fun provideTvdbWebRetrofit(okHttpClient: OkHttpClient, moshi: Moshi): Retrofit =
+        Retrofit.Builder()
+            .baseUrl("https://thetvdb.com/")
+            .client(okHttpClient)
+            .addConverterFactory(MoshiConverterFactory.create(moshi))
+            .build()
+
+    @Provides
+    @Singleton
+    fun provideTvdbWebApi(@Named("tvdb") retrofit: Retrofit): com.nuvio.tv.data.remote.api.TvdbWebApi =
+        retrofit.create(com.nuvio.tv.data.remote.api.TvdbWebApi::class.java)
+
     @Provides
     @Singleton
     @Named("trakt")

@@ -68,9 +68,31 @@ small — our changes are localized to the files listed below.
 - **Email/password sign-in re-enabled on TV** (`AuthSignInScreen` rebuilt via `AccountViewModel`),
   with first launch defaulting to the email screen + a QR toggle (`MainActivity`, `NuvioNavHost`,
   Settings→Sign-in route).
+- **Keyless TheTVDB metadata layer + Cinemeta `#DUPE#` reconstruction.** Cinemeta de-dupes shows that
+  have multiple regional IMDb entries (e.g. *Mayday* / *Air Crash Investigation* / *Air Disasters*) by
+  renaming the duplicate to the literal `#DUPE#` (slug `<type>/dupe-<id>`) and leaving a half-broken
+  entry whose own IMDb id is dead at TMDB/IMDb — so it appears nameless with the canonical sibling's
+  data leaking in (wrong title "Mayday", year 2003, country "Canada", 404'd metahub episode
+  thumbnails). `core/tvdb/TvdbMetadataService` recovers the rightful entry **with no API key** by
+  scraping `thetvdb.com` (the dupe's Cinemeta meta still carries a `tvdb_id`): name + year +
+  current poster/background + country/language/status/genres/runtime from the series page, and the full
+  season/episode tree (with screenshots) from the *all-seasons* page. On both the catalog tile
+  (`CatalogRepositoryImpl`) and the detail screen (`MetaDetailsViewModel.enrichMeta`) the entry is
+  rebuilt from TheTVDB — re-fetching from Cinemeta when another meta addon masks the dupe — and the
+  TMDB enrichment is guarded so it can't re-clobber the regional facts; episode thumbnails fall back to
+  the series backdrop where TheTVDB has none. A metahub clearlogo fallback (by IMDb id) also restores
+  stylized hero title-treatments when an addon serves no logo. Threaded through a new `tvdb_id` field
+  on `MetaResponseDto` → `Meta` → `MetaMapper`.
+- **Full episode-description overlay.** Episode-card descriptions truncate with `…`; the episode
+  long-press menu now has a **View full description** action that opens the untruncated text in a
+  D-pad-scrollable overlay. Extracted the hero's scrollable-synopsis pattern into a reusable
+  `ui/components/ScrollableDescriptionDialog`.
 - **Files touched:** `StreamScreen.kt`, `HeroSection.kt`, `Stream.kt`/`Meta.kt`, the `*Dto`s +
   mappers, `core/util/EpgGuide.kt`, `PlayerMediaSourceFactory.kt`,
-  `PlayerRuntimeControllerTracks.kt`, `AuthSignInScreen.kt`, `MainActivity.kt`, `NuvioNavHost.kt`.
+  `PlayerRuntimeControllerTracks.kt`, `AuthSignInScreen.kt`, `MainActivity.kt`, `NuvioNavHost.kt`,
+  `core/tvdb/TvdbMetadataService.kt`, `core/tmdb/DupeTitleResolver.kt`,
+  `data/remote/api/TvdbWebApi.kt`, `CatalogRepositoryImpl.kt`, `MetaDetailsViewModel.kt`,
+  `EpisodesSection.kt`, `ui/components/ScrollableDescriptionDialog.kt`, `core/di/NetworkModule.kt`.
 
 ## Installation
 

@@ -32,6 +32,7 @@ data class Meta(
     val links: List<MetaLink>,
     val trailerYtIds: List<String> = emptyList(),
     val imdbId: String? = null,
+    val tvdbId: Int? = null,
     val slug: String? = null,
     val released: String? = null,
     val landscapePoster: String? = null,

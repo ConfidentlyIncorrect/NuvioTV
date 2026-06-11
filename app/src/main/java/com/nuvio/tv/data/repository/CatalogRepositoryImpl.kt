@@ -4,10 +4,12 @@ import android.content.Context
 import android.util.Log
 import com.nuvio.tv.core.network.NetworkResult
 import com.nuvio.tv.core.network.safeApiCall
+import com.nuvio.tv.core.tmdb.DupeTitleResolver
 import com.nuvio.tv.data.mapper.toDomain
 import com.nuvio.tv.data.remote.api.AddonApi
 import com.nuvio.tv.domain.model.CatalogRow
 import com.nuvio.tv.domain.model.ContentType
+import com.nuvio.tv.domain.model.MetaPreview
 import com.nuvio.tv.domain.repository.CatalogRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
@@ -19,7 +21,8 @@ import javax.inject.Singleton
 @Singleton
 class CatalogRepositoryImpl @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val api: AddonApi
+    private val api: AddonApi,
+    private val dupeTitleResolver: DupeTitleResolver
 ) : CatalogRepository {
     companion object {
         private const val TAG = "CatalogRepository"
@@ -47,7 +50,7 @@ class CatalogRepositoryImpl @Inject constructor(
 
         when (val result = safeApiCall(context) { api.getCatalog(url) }) {
             is NetworkResult.Success -> {
-                val items = result.data.metas.map { it.toDomain() }.distinctBy { it.id }
+                val items = repairDupeNames(result.data.metas.map { it.toDomain() }.distinctBy { it.id }, addonBaseUrl, type)
                 Log.d(
                     TAG,
                     "Catalog fetch success addonId=$addonId type=$type catalogId=$catalogId items=${items.size}"
@@ -85,6 +88,38 @@ class CatalogRepositoryImpl @Inject constructor(
             }
             NetworkResult.Loading -> { /* Already emitted */ }
         }
+    }
+
+    // Cinemeta leaves half-deduplicated entries in catalog/search results with name "#DUPE#"
+    // (slug "<type>/dupe-<id>"). Their episodes/id are intact, so rather than hiding them we restore
+    // the rightful title AND current poster from TheTVDB (keyless): fetch the dupe's Cinemeta meta to
+    // read its tvdb_id, then resolve name + poster from TheTVDB (its art is current; Cinemeta's dupe
+    // art is often the stale pre-2019 set). Fast path: no-op unless a dupe is actually present (the
+    // common case), and resolution is cached by meta url + tvdb id.
+    private suspend fun repairDupeNames(
+        items: List<MetaPreview>,
+        addonBaseUrl: String,
+        type: String
+    ): List<MetaPreview> {
+        if (items.none { DupeTitleResolver.isDupeMarker(it.name, it.slug) }) return items
+        val out = ArrayList<MetaPreview>(items.size)
+        for (item in items) {
+            if (DupeTitleResolver.isDupeMarker(item.name, item.slug)) {
+                val art = dupeTitleResolver.resolveTileArt(addonBaseUrl, type, item.id)
+                out += if (art != null) {
+                    item.copy(
+                        name = art.name?.takeIf { it.isNotBlank() && it != "#DUPE#" } ?: item.name,
+                        poster = art.poster ?: item.poster,
+                        rawPosterUrl = art.poster ?: item.rawPosterUrl,
+                        // Cinemeta's dupe meta leaks the canonical year (e.g. "2003–"); use TheTVDB's.
+                        releaseInfo = art.year?.toString() ?: item.releaseInfo
+                    )
+                } else item
+            } else {
+                out += item
+            }
+        }
+        return out
     }
 
     private fun buildCatalogUrl(

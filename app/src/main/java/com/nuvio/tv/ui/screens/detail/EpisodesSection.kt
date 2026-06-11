@@ -81,6 +81,7 @@ import com.nuvio.tv.R
 import com.nuvio.tv.domain.model.Video
 import com.nuvio.tv.ui.components.ImdbRatingSourceLabel
 import com.nuvio.tv.ui.components.NuvioDialog
+import com.nuvio.tv.ui.components.ScrollableDescriptionDialog
 import com.nuvio.tv.ui.theme.NuvioTheme
 import com.nuvio.tv.ui.theme.ThemeColors
 import android.text.format.DateFormat
@@ -274,6 +275,7 @@ fun EpisodesRow(
     val dedupedEpisodes = remember(episodes) { episodes.distinctBy { it.id } }
     val restoreTargetRequester = restoreEpisodeId?.let { episodeFocusRequesters[it] }
     var optionsEpisode by remember { mutableStateOf<Video?>(null) }
+    var descriptionEpisode by remember { mutableStateOf<Video?>(null) }
     val cardMetrics = rememberEpisodeCardMetrics()
     val density = LocalDensity.current
     val rowPrefetchStrategy = remember { LazyListPrefetchStrategy(nestedPrefetchItemCount = 2) }
@@ -392,6 +394,11 @@ fun EpisodesRow(
                 onEpisodeClick(selectedEpisode)
                 optionsEpisode = null
             },
+            onShowDescription = {
+                descriptionEpisode = selectedEpisode
+                optionsEpisode = null
+            },
+            showDescription = !selectedEpisode.overview.isNullOrBlank(),
             onOpenEpisodeComments = {
                 onOpenEpisodeComments(selectedEpisode)
                 optionsEpisode = null
@@ -418,6 +425,15 @@ fun EpisodesRow(
                 onMarkPreviousEpisodesWatched(selectedEpisode)
                 optionsEpisode = null
             }
+        )
+    }
+
+    descriptionEpisode?.let { ep ->
+        val descContext = LocalContext.current
+        ScrollableDescriptionDialog(
+            title = ep.title.localizeEpisodeTitle(descContext),
+            text = ep.overview.orEmpty(),
+            onDismiss = { descriptionEpisode = null }
         )
     }
 }
@@ -878,6 +894,8 @@ private fun EpisodeOptionsDialog(
     hasPreviousEpisodes: Boolean = false,
     onDismiss: () -> Unit,
     onPlay: () -> Unit,
+    onShowDescription: () -> Unit = {},
+    showDescription: Boolean = false,
     onOpenEpisodeComments: () -> Unit = {},
     showOpenEpisodeComments: Boolean = false,
     onPlayManually: () -> Unit = {},
@@ -946,6 +964,19 @@ private fun EpisodeOptionsDialog(
             modifier = Modifier.fillMaxWidth()
         ) {
             Text(stringResource(R.string.episodes_play))
+        }
+
+        if (showDescription) {
+            Button(
+                onClick = onShowDescription,
+                colors = ButtonDefaults.colors(
+                    containerColor = NuvioTheme.colors.BackgroundCard,
+                    contentColor = NuvioTheme.colors.TextPrimary
+                ),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(stringResource(R.string.episodes_view_description))
+            }
         }
 
         if (showOpenEpisodeComments) {
