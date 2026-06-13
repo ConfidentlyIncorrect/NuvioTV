@@ -248,38 +248,6 @@ object NetworkModule {
     fun provideTvdbWebApi(@Named("tvdb") retrofit: Retrofit): com.nuvio.tv.data.remote.api.TvdbWebApi =
         retrofit.create(com.nuvio.tv.data.remote.api.TvdbWebApi::class.java)
 
-    // Keyless name-based torrent indexers (used to recover #DUPE# series whose dead IMDb id breaks
-    // id-based addons). Separate base URLs, shared OkHttp.
-    @Provides
-    @Singleton
-    @Named("apibay")
-    fun provideApibayRetrofit(okHttpClient: OkHttpClient, moshi: Moshi): Retrofit =
-        Retrofit.Builder()
-            .baseUrl("https://apibay.org/")
-            .client(okHttpClient)
-            .addConverterFactory(MoshiConverterFactory.create(moshi))
-            .build()
-
-    @Provides
-    @Singleton
-    fun provideApibayApi(@Named("apibay") retrofit: Retrofit): com.nuvio.tv.data.remote.api.ApibayApi =
-        retrofit.create(com.nuvio.tv.data.remote.api.ApibayApi::class.java)
-
-    @Provides
-    @Singleton
-    @Named("torrentscsv")
-    fun provideTorrentsCsvRetrofit(okHttpClient: OkHttpClient, moshi: Moshi): Retrofit =
-        Retrofit.Builder()
-            .baseUrl("https://torrents-csv.com/")
-            .client(okHttpClient)
-            .addConverterFactory(MoshiConverterFactory.create(moshi))
-            .build()
-
-    @Provides
-    @Singleton
-    fun provideTorrentsCsvApi(@Named("torrentscsv") retrofit: Retrofit): com.nuvio.tv.data.remote.api.TorrentsCsvApi =
-        retrofit.create(com.nuvio.tv.data.remote.api.TorrentsCsvApi::class.java)
-
     @Provides
     @Singleton
     @Named("trakt")

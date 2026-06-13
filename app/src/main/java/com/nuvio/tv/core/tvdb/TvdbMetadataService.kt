@@ -37,7 +37,6 @@ data class TvdbSeries(
     val status: String?,       // e.g. "Continuing" / "Ended"
     val genres: List<String>,
     val runtimeMinutes: Int?,  // "Average Runtime"
-    val aliases: List<String>, // alternate titles, e.g. ["Mayday", "Air Crash Investigation"]
     val episodes: List<TvdbEpisode>
 )
 
@@ -103,9 +102,6 @@ class TvdbMetadataService @Inject constructor(
         private val EPISODE_THUMB_RE = Regex(
             "/episodes/(\\d+)\">\\s*<img[^>]+data-src=\"(https://artworks\\.thetvdb\\.com/[^\"]+)\""
         )
-        // "Aliases" sidebar block + its <li> items (alternate titles).
-        private val ALIASES_BLOCK_RE = Regex("Aliases([\\s\\S]{0,600})", RegexOption.IGNORE_CASE)
-        private val LI_TEXT_RE = Regex("<li[^>]*>\\s*([^<]+?)\\s*</li>")
 
         private val MONTHS = mapOf(
             "january" to "01", "february" to "02", "march" to "03", "april" to "04",
@@ -185,11 +181,6 @@ class TvdbMetadataService @Inject constructor(
                     ANCHOR_TEXT_RE.findAll(span).map { it.groupValues[1].trim() }.filter { it.isNotBlank() }.toList()
                         .ifEmpty { stripTags(span).split(",").map { it.trim() }.filter { it.isNotBlank() } }
                 } ?: emptyList()
-                val aliases = ALIASES_BLOCK_RE.find(html)?.groupValues?.getOrNull(1)?.let { block ->
-                    LI_TEXT_RE.findAll(block).map { it.groupValues[1].trim() }
-                        .filter { it.isNotBlank() && !it.equals(name, ignoreCase = true) }
-                        .distinct().take(8).toList()
-                } ?: emptyList()
 
                 val episodes = slug?.let { parseEpisodes(api.allSeasons(it).body()?.string().orEmpty()) } ?: emptyList()
                 val year = seriesYear
@@ -207,7 +198,6 @@ class TvdbMetadataService @Inject constructor(
                     status = status,
                     genres = genres,
                     runtimeMinutes = runtimeMinutes,
-                    aliases = aliases,
                     episodes = episodes
                 )
             }.onFailure { Log.d(TAG, "fetchSeries($tvdbId) failed: ${it.message}") }.getOrNull()

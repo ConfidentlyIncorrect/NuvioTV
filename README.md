@@ -108,19 +108,6 @@ merged with **zero** conflicts).
   the app removes its task and kills its process (`MainActivity.fullyExit()`) instead of staying
   cached — Home is hooked via `onUserLeaveHint()`, guarded against external-player handoffs. Backed by
   `LayoutPreferenceDataStore` (`exitAppOnBack` / `exitAppOnHome`).
-- **Name-based torrent search for `#DUPE#` series.** A dupe's dead IMDb id makes id-based addons
-  (Torrentio) return ~nothing and confuses others (Jackettio matched `tt2091498` → "Dune: Prophecy"),
-  so these shows surface only a stray torrent. `core/torrentsearch/TorrentSearchSource` instead
-  resolves the show's real title + aliases from TheTVDB (e.g. "Air Disasters" / "Mayday" / "Air Crash
-  Investigation") and searches public title indexers — **apibay (TPB)** + **torrents-csv**, merged and
-  deduped by infoHash (1337x is Cloudflare-walled, so it's not usable). The matching season /
-  multi-season / exact-episode torrents are **folded into the existing torrent-source addon groups** in
-  `getStreamsFromAllAddons` (any addon that returned infoHash streams — Torrentio AD/TB, Jackettio,
-  …), tagged as that addon, so they ride the normal debrid resolution and show under those same
-  chips rather than a separate section. The user's debrid (AllDebrid/TorBox) resolves them and the
-  existing `buildDebridEpisodePatterns` file-selector picks the episode from inside the pack — no
-  `fileIdx` needed. Requires debrid configured in NuvioTV (DirectDebrid). Scoped to dupes — id-based
-  addons remain authoritative for normal shows.
 - **Files touched:** `StreamScreen.kt`, `HeroSection.kt`, `Stream.kt`/`Meta.kt`, the `*Dto`s +
   mappers, `core/util/EpgGuide.kt`, `PlayerMediaSourceFactory.kt`,
   `PlayerRuntimeControllerTracks.kt`, `AuthSignInScreen.kt`, `MainActivity.kt`, `NuvioNavHost.kt`,
