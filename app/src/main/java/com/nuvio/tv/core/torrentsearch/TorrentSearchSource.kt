@@ -37,7 +37,6 @@ class TorrentSearchSource @Inject constructor(
     companion object {
         private const val TAG = "TorrentSearchSource"
         private const val CINEMETA_BASE = "https://v3-cinemeta.strem.io"
-        const val SOURCE_LABEL = "🔎 Name search"
 
         private val HASH_RE = Regex("^[a-f0-9]{40}$|^[a-f0-9]{32}$")
         private val EP_RE = Regex("s\\d{1,2}e\\d{1,2}|\\b\\d{1,2}x\\d{1,2}\\b")
@@ -65,13 +64,14 @@ class TorrentSearchSource @Inject constructor(
     }
 
     /**
-     * Search for an episode of a dupe series. Returns infoHash streams (season packs, multi-season
-     * packs, and exact-episode torrents) ranked by seeders; empty if not a dupe or nothing found.
+     * Search for an episode of a dupe series. Returns raw infoHash torrent streams (season packs,
+     * multi-season packs, exact-episode torrents) ranked by seeders, deduped by hash. Empty if not a
+     * dupe or nothing found. The caller folds these into the existing torrent-addon groups, so they
+     * ride the normal debrid resolution and show under "Torrentio AD"/"TB"/etc.
      */
     suspend fun searchEpisode(imdbId: String, season: Int?, episode: Int?): List<Stream> {
         if (season == null || episode == null) return emptyList()
         val titles = resolveTitles(imdbId) ?: return emptyList()
-        val primary = titles.first()  // the show's own title — same season numbering as our entry
         val hits = withContext(Dispatchers.IO) {
             coroutineScope {
                 titles.flatMap { t -> listOf(async { apibay(t) }, async { torrentsCsv(t) }) }
@@ -89,14 +89,9 @@ class TorrentSearchSource @Inject constructor(
 
         return byHash.values
             .mapNotNull { hit -> classify(hit.name, season, episode)?.let { hit to it } }
-            // Rank torrents named with the show's OWN title first: aliases (e.g. "Mayday") use a
-            // different season numbering, so an auto-picked SxxExx from them can be the wrong episode.
-            .sortedWith(
-                compareByDescending<Pair<Hit, String>> { it.first.name.contains(primary, ignoreCase = true) }
-                    .thenByDescending { it.first.seeders }
-            )
+            .sortedByDescending { it.first.seeders }
             .take(40)
-            .map { (hit, kind) -> toStream(hit, kind, primaryMatch = hit.name.contains(primary, ignoreCase = true)) }
+            .map { (hit, kind) -> toStream(hit, kind) }
     }
 
     private suspend fun apibay(title: String): List<Hit> = runCatching {
@@ -129,7 +124,7 @@ class TorrentSearchSource @Inject constructor(
         return null
     }
 
-    private fun toStream(hit: Hit, kind: String, primaryMatch: Boolean): Stream {
+    private fun toStream(hit: Hit, kind: String): Stream {
         val (quality, qualityValue) = parseQuality(hit.name)
         val sizeGb = if (hit.sizeBytes > 0) String.format("%.2f GB", hit.sizeBytes / 1_000_000_000.0) else "?"
         val kindTag = when (kind) {
@@ -138,12 +133,9 @@ class TorrentSearchSource @Inject constructor(
             "complete" -> "Complete pack"
             else -> kind
         }
-        // Aliases ("Mayday"/"Air Crash Investigation") number their seasons differently, so the file
-        // picked from them may be a neighbouring episode — flag it so the choice is informed.
-        val numberingTag = if (primaryMatch) "" else " ⚠ alt numbering"
         return Stream(
-            name = "$SOURCE_LABEL\n${quality ?: kindTag}",
-            title = "${hit.name}\n👤 ${hit.seeders} 💾 $sizeGb • $kindTag • ${hit.source}$numberingTag",
+            name = quality ?: kindTag,
+            title = "${hit.name}\n👤 ${hit.seeders} 💾 $sizeGb • $kindTag",
             description = null,
             url = null,
             ytId = null,
@@ -151,7 +143,7 @@ class TorrentSearchSource @Inject constructor(
             fileIdx = null,  // debrid file selector matches the episode by SxxExx in filenames
             externalUrl = null,
             behaviorHints = null,
-            addonName = SOURCE_LABEL,
+            addonName = "",   // re-tagged per torrent-addon group when folded in by StreamRepositoryImpl
             addonLogo = null,
             sources = TRACKERS.map { "tracker:$it" } + "dht:${hit.hash}",
             quality = quality,
