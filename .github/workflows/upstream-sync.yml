@@ -1,0 +1,84 @@
+name: Upstream sync check
+
+# Watches tapframe/NuvioTV `dev` and, when it's ahead of our `custom`, opens (or updates) a single
+# tracking issue summarizing the new commits and whether they merge cleanly — so a sync never gets
+# silently missed. It deliberately does NOT auto-merge: our changes overlap upstream's churn heavily,
+# so a sync almost always needs hands-on conflict resolution (run `scripts/sync-upstream.sh` locally).
+#
+# NOTE: GitHub only registers `schedule`/`workflow_dispatch` from the repo's DEFAULT branch. This fork
+# builds from `custom`, so either set `custom` as the default branch (Settings → Branches) for the
+# weekly run to fire, or trigger this manually. The job always checks out `custom` regardless.
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'   # Mondays 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout custom
+        uses: actions/checkout@v4
+        with:
+          ref: custom
+          fetch-depth: 0
+
+      - name: Assess upstream
+        id: assess
+        run: |
+          set -e
+          git config user.email "actions@github.com"
+          git config user.name "github-actions"
+          git remote add upstream https://github.com/tapframe/NuvioTV.git
+          git fetch --quiet upstream dev
+
+          COUNT="$(git rev-list --count HEAD..upstream/dev)"
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+          if [ "$COUNT" -eq 0 ]; then echo "Up to date."; exit 0; fi
+
+          git log --oneline HEAD..upstream/dev > newcommits.txt
+          if git merge --no-commit --no-ff upstream/dev >/dev/null 2>&1; then
+            echo "status=clean" >> "$GITHUB_OUTPUT"
+            : > conflicts.txt
+          else
+            echo "status=conflict" >> "$GITHUB_OUTPUT"
+            git diff --name-only --diff-filter=U > conflicts.txt
+          fi
+          git merge --abort 2>/dev/null || true
+
+      - name: Open/update tracking issue
+        if: steps.assess.outputs.count != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          COUNT="${{ steps.assess.outputs.count }}"
+          STATUS="${{ steps.assess.outputs.status }}"
+          TITLE="Upstream sync: $COUNT new commit(s) from tapframe/dev"
+
+          {
+            echo "**$COUNT** new commit(s) on \`upstream/dev\` are not yet on \`custom\`."
+            echo
+            echo "Auto-merge probe: **$STATUS**"
+            echo
+            if [ "$STATUS" = "conflict" ] && [ -s conflicts.txt ]; then
+              echo "<details><summary>Conflicting files</summary>"; echo
+              echo '```'; cat conflicts.txt; echo '```'
+              echo "</details>"; echo
+            fi
+            echo "<details><summary>New commits</summary>"; echo
+            echo '```'; cat newcommits.txt; echo '```'
+            echo "</details>"; echo
+            echo "Run \`scripts/sync-upstream.sh\` locally to merge, build, and land it."
+          } > body.md
+
+          NUM="$(gh issue list --search 'Upstream sync in:title' --state open --json number --jq '.[0].number // empty')"
+          if [ -n "$NUM" ]; then
+            gh issue edit "$NUM" --title "$TITLE" --body-file body.md
+          else
+            gh issue create --title "$TITLE" --body-file body.md
+          fi

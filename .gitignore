@@ -43,6 +43,7 @@ backups/
 .supabase_db.env
 scripts/*
 !scripts/release_beta.py
+!scripts/sync-upstream.sh
 /supabase
 tv-samples
 HOME_UI_OPTIMIZATION_NOTES.local.md
