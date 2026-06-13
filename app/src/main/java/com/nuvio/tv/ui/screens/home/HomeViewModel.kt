@@ -73,6 +73,7 @@ class HomeViewModel @Inject constructor(
     internal val authSessionNoticeDataStore: AuthSessionNoticeDataStore,
     internal val tmdbService: TmdbService,
     internal val tmdbMetadataService: TmdbMetadataService,
+    internal val dupeTitleResolver: com.nuvio.tv.core.tmdb.DupeTitleResolver,
     internal val mdbListRepository: MDBListRepository,
     internal val trailerService: TrailerService,
     internal val watchedItemsPreferences: WatchedItemsPreferences,

@@ -1730,6 +1730,22 @@ private suspend fun HomeViewModel.buildNextUpItem(
     return ContinueWatchingItem.NextUp(info)
 }
 
+/**
+ * Continue-Watching cards can show the stored Cinemeta "#DUPE#" placeholder as the show name (it
+ * was saved at play time, and TMDB can't re-name the dead id). Repair it from TheTVDB the same way
+ * the catalog tiles and detail screen do. No-op for normal shows (gated on the dupe marker).
+ */
+private suspend fun HomeViewModel.repairedContinueWatchingName(
+    rawName: String,
+    contentId: String,
+    contentType: String
+): String {
+    if (!com.nuvio.tv.core.tmdb.DupeTitleResolver.isDupeMarker(rawName, null)) return rawName
+    val fixed = dupeTitleResolver
+        .resolveTileArt("https://v3-cinemeta.strem.io", contentType, contentId)?.name
+    return fixed?.takeIf { it.isNotBlank() && it != "#DUPE#" } ?: rawName
+}
+
 private suspend fun HomeViewModel.enrichInProgressItem(
     item: ContinueWatchingItem.InProgress,
     metaCache: MutableMap<String, CwMetaSummary?>,
@@ -1771,9 +1787,13 @@ private suspend fun HomeViewModel.enrichInProgressItem(
     } else null
     val imdbRating = tmdbData?.rating?.toFloat() ?: meta.imdbRating
     val settings = currentTmdbSettings
+    val resolvedName = repairedContinueWatchingName(
+        if (settings.useBasicInfo) tmdbData?.name ?: meta.name else meta.name,
+        item.progress.contentId, item.progress.contentType
+    )
     item.copy(
         progress = item.progress.copy(
-            name = if (settings.useBasicInfo) tmdbData?.name ?: meta.name else meta.name,
+            name = resolvedName,
             poster = item.progress.poster ?: meta.poster.normalizeImageUrl() ?: if (settings.useArtwork) tmdbData?.poster.normalizeImageUrl() else null,
             backdrop = if (settings.useArtwork) tmdbData?.backdrop.normalizeImageUrl() ?: meta.backdropUrl.normalizeImageUrl() ?: item.progress.backdrop else meta.backdropUrl.normalizeImageUrl() ?: item.progress.backdrop,
             logo = if (settings.useArtwork) tmdbData?.logo.normalizeImageUrl() ?: meta.logo.normalizeImageUrl() ?: item.progress.logo else meta.logo.normalizeImageUrl() ?: item.progress.logo,
@@ -1850,8 +1870,12 @@ private suspend fun HomeViewModel.enrichNextUpItem(
     )
 
     val settings = currentTmdbSettings
+    val resolvedName = repairedContinueWatchingName(
+        if (settings.useBasicInfo) tmdbData?.name ?: meta.name else meta.name,
+        item.info.contentId, item.info.contentType
+    )
     val enrichedInfo = item.info.copy(
-        name = if (settings.useBasicInfo) tmdbData?.name ?: meta.name else meta.name,
+        name = resolvedName,
         poster = item.info.poster ?: meta.poster.normalizeImageUrl() ?: if (settings.useArtwork) tmdbData?.poster else null,
         backdrop = if (settings.useArtwork) tmdbData?.backdrop ?: meta.backdropUrl.normalizeImageUrl() ?: item.info.backdrop else meta.backdropUrl.normalizeImageUrl() ?: item.info.backdrop,
         logo = if (settings.useArtwork) tmdbData?.logo ?: meta.logo.normalizeImageUrl() ?: item.info.logo else meta.logo.normalizeImageUrl() ?: item.info.logo,
