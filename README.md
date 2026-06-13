@@ -40,6 +40,21 @@ epgshare01/i.mjh.nz).
 | `custom` | All our modifications, on top of upstream `tapframe/NuvioTV` `dev`. **Build releases from here.** |
 
 **Syncing upstream (merge, not rebase — `custom` is pushed):**
+
+One command does the whole dance below — fetch upstream, merge onto a throwaway
+`sync/upstream-<date>` branch, list any conflicts, and compile-check a clean merge (it never touches
+`custom` until you fast-forward it yourself):
+```bash
+scripts/sync-upstream.sh            # JAVA_HOME must point at a JDK 17–21 for the compile check
+# then, once green:
+git switch custom && git merge --ff-only sync/upstream-<date> && git push origin custom
+```
+A **`Upstream sync check`** GitHub Action (`.github/workflows/upstream-sync.yml`) also opens/updates a
+single tracking issue whenever `upstream/dev` gets ahead, with the new-commit list and a clean/conflict
+probe — so a sync never gets missed. (GitHub only fires `schedule` from the **default branch**; set
+`custom` as default, or trigger the workflow manually.)
+
+Or do it by hand:
 ```bash
 git remote add upstream https://github.com/tapframe/NuvioTV.git   # one-time
 git fetch upstream
@@ -48,7 +63,8 @@ git merge upstream/dev                           # resolve any conflicts, then b
 git switch custom && git merge --ff-only sync-dev && git push origin custom
 ```
 Use merge (not rebase) so the pushed `custom` history isn't rewritten. The conflict surface is
-small — our changes are localized to the files listed below.
+small — our changes are localized to the files listed below (the last sync of 52 upstream commits
+merged with **zero** conflicts).
 
 ### `custom` modifications
 
