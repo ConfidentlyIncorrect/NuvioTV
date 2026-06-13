@@ -43,7 +43,8 @@ class StreamRepositoryImpl @Inject constructor(
     private val pluginManager: PluginManager,
     private val tmdbService: TmdbService,
     private val debridStreamPresentation: DebridStreamPresentation,
-    private val localDebridAvailabilityService: LocalDebridAvailabilityService
+    private val localDebridAvailabilityService: LocalDebridAvailabilityService,
+    private val torrentSearchSource: com.nuvio.tv.core.torrentsearch.TorrentSearchSource
 ) : StreamRepository {
     private enum class StreamFailureKind {
         MISSING,
@@ -88,9 +89,15 @@ class StreamRepositoryImpl @Inject constructor(
                 // Channel to receive results as they complete
                 val resultChannel = Channel<AddonStreams>(Channel.UNLIMITED)
                 
+                // Name-based torrent search (recovers Cinemeta #DUPE# series; no-ops for non-dupes).
+                val torrentSearchImdbId = videoId.substringBefore(":")
+                val runTorrentSearch = (type.equals("series", true) || type.equals("tv", true)) &&
+                    torrentSearchImdbId.startsWith("tt", true) && season != null && episode != null
+
                 // Track number of pending jobs
                 val totalJobs = streamAddons.size +
-                    (if (pluginRequest != null) 1 else 0)
+                    (if (pluginRequest != null) 1 else 0) +
+                    (if (runTorrentSearch) 1 else 0)
                 val completedJobs = java.util.concurrent.atomic.AtomicInteger(0)
 
                 // Launch addon jobs
@@ -171,6 +178,31 @@ class StreamRepositoryImpl @Inject constructor(
                         } catch (e: Exception) {
                             if (e is CancellationException) throw e
                             Log.e(TAG, "Plugin execution failed: ${e.message}")
+                            if (completedJobs.incrementAndGet() >= totalJobs) {
+                                resultChannel.close()
+                            }
+                        }
+                    }
+                }
+
+                // Name-based torrent search job (dupe-scoped; the source returns empty for non-dupes).
+                if (runTorrentSearch) {
+                    launch {
+                        try {
+                            val streams = torrentSearchSource.searchEpisode(torrentSearchImdbId, season, episode)
+                            if (streams.isNotEmpty()) {
+                                resultChannel.send(
+                                    AddonStreams(
+                                        addonName = com.nuvio.tv.core.torrentsearch.TorrentSearchSource.SOURCE_LABEL,
+                                        addonLogo = null,
+                                        streams = streams
+                                    )
+                                )
+                            }
+                        } catch (e: Exception) {
+                            if (e is CancellationException) throw e
+                            Log.e(TAG, "Torrent name search failed: ${e.message}")
+                        } finally {
                             if (completedJobs.incrementAndGet() >= totalJobs) {
                                 resultChannel.close()
                             }
