@@ -251,6 +251,18 @@ class MainActivity : ComponentActivity() {
     /** True until the first onResume after onCreate completes. */
     private var isFirstResumeAfterCreate = false
 
+    // Exit-behavior toggles (mirrored from LayoutPreferenceDataStore so the lifecycle callbacks can
+    // read them synchronously). See onUserLeaveHint() and the onExitApp wiring.
+    @Volatile private var exitAppOnBack = false
+    @Volatile private var exitAppOnHome = false
+
+    /** Close the app completely — remove its task and kill the process so nothing stays cached. */
+    private fun fullyExit() {
+        finishAndRemoveTask()
+        finishAffinity()
+        kotlin.system.exitProcess(0)
+    }
+
     @OptIn(ExperimentalTvMaterial3Api::class, ExperimentalFoundationApi::class)
     override fun attachBaseContext(newBase: Context) {
         val tag = LocaleCache.localeTag.takeIf { it != LocaleCache.UNSET }
@@ -278,6 +290,10 @@ class MainActivity : ComponentActivity() {
 
         // Wire the Activity-level launcher to the tracker
         externalPlaybackTracker.activityLauncher = externalPlayerLauncher
+
+        // Mirror the exit-behavior toggles so the lifecycle callbacks can read them synchronously.
+        lifecycleScope.launch { layoutPreferenceDataStore.exitAppOnBack.collect { exitAppOnBack = it } }
+        lifecycleScope.launch { layoutPreferenceDataStore.exitAppOnHome.collect { exitAppOnHome = it } }
 
         PluginRuntimeHooks.onActivityCreate(this)
 
@@ -751,8 +767,12 @@ class MainActivity : ComponentActivity() {
                             onSwitchProfile = { hasSelectedProfileThisSession = false },
                             onNavigate = { optimisticRoute = it },
                             onExitApp = {
-                                finishAffinity()
-                                finishAndRemoveTask()
+                                if (exitAppOnBack) {
+                                    fullyExit()
+                                } else {
+                                    finishAffinity()
+                                    finishAndRemoveTask()
+                                }
                             }
                         )
                     } else {
@@ -772,8 +792,12 @@ class MainActivity : ComponentActivity() {
                             onSwitchProfile = { hasSelectedProfileThisSession = false },
                             onNavigate = { optimisticRoute = it },
                             onExitApp = {
-                                finishAffinity()
-                                finishAndRemoveTask()
+                                if (exitAppOnBack) {
+                                    fullyExit()
+                                } else {
+                                    finishAffinity()
+                                    finishAndRemoveTask()
+                                }
                             }
                         )
                     }
@@ -845,6 +869,16 @@ class MainActivity : ComponentActivity() {
         super.onStart()
         profileSettingsSyncService.requestForegroundPull()
         androidTvChannelSyncService.onForegroundChanged(true)
+    }
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        // User pressed Home/Recents to leave. If "Close when Home is pressed" is on, fully close —
+        // but NOT when we're handing off to an external player (that also fires this and we need to
+        // stay alive for its result).
+        if (exitAppOnHome && !externalPlaybackTracker.isTracking) {
+            fullyExit()
+        }
     }
 
     override fun onStop() {

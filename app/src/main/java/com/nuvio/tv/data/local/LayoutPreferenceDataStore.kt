@@ -79,6 +79,8 @@ class LayoutPreferenceDataStore @Inject constructor(
     private val continueWatchingSortModeKey = stringPreferencesKey("continue_watching_sort_mode")
     private val detailPageTrailerButtonEnabledKey = booleanPreferencesKey("detail_page_trailer_button_enabled")
     private val preferExternalMetaAddonDetailKey = booleanPreferencesKey("prefer_external_meta_addon_detail")
+    private val exitAppOnBackKey = booleanPreferencesKey("exit_app_on_back")
+    private val exitAppOnHomeKey = booleanPreferencesKey("exit_app_on_home")
     private val modernHeroFullScreenBackdropKey = booleanPreferencesKey("modern_hero_full_screen_backdrop")
     private val hideUnreleasedContentKey = booleanPreferencesKey("hide_unreleased_content")
     private val showFullReleaseDateKey = booleanPreferencesKey("show_full_release_date")
@@ -282,6 +284,18 @@ class LayoutPreferenceDataStore @Inject constructor(
 
     val preferExternalMetaAddonDetail: Flow<Boolean> = profileFlow { prefs ->
         prefs[preferExternalMetaAddonDetailKey] ?: true
+    }
+
+    // Fully kill the app process when leaving via Back (at a root screen). Off by default → keep
+    // upstream's behavior (finish the task but let Android cache the process).
+    val exitAppOnBack: Flow<Boolean> = profileFlow { prefs ->
+        prefs[exitAppOnBackKey] ?: false
+    }
+
+    // Fully kill the app process when the Home button is pressed (going to the launcher), instead of
+    // backgrounding it. Off by default.
+    val exitAppOnHome: Flow<Boolean> = profileFlow { prefs ->
+        prefs[exitAppOnHomeKey] ?: false
     }
 
     val hideUnreleasedContent: Flow<Boolean> = profileFlow { prefs ->
@@ -576,6 +590,18 @@ class LayoutPreferenceDataStore @Inject constructor(
     suspend fun setPreferExternalMetaAddonDetail(enabled: Boolean) {
         store().edit { prefs ->
             prefs[preferExternalMetaAddonDetailKey] = enabled
+        }
+    }
+
+    suspend fun setExitAppOnBack(enabled: Boolean) {
+        store().edit { prefs ->
+            prefs[exitAppOnBackKey] = enabled
+        }
+    }
+
+    suspend fun setExitAppOnHome(enabled: Boolean) {
+        store().edit { prefs ->
+            prefs[exitAppOnHomeKey] = enabled
         }
     }
 

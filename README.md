@@ -103,6 +103,11 @@ merged with **zero** conflicts).
   long-press menu now has a **View full description** action that opens the untruncated text in a
   D-pad-scrollable overlay. Extracted the hero's scrollable-synopsis pattern into a reusable
   `ui/components/ScrollableDescriptionDialog`.
+- **"Exit behavior" settings (fully close the app).** Settings → Layout → *Exit behavior* adds two
+  toggles (both off by default): **Fully close on Back** and **Close when Home is pressed**. When on,
+  the app removes its task and kills its process (`MainActivity.fullyExit()`) instead of staying
+  cached — Home is hooked via `onUserLeaveHint()`, guarded against external-player handoffs. Backed by
+  `LayoutPreferenceDataStore` (`exitAppOnBack` / `exitAppOnHome`).
 - **Files touched:** `StreamScreen.kt`, `HeroSection.kt`, `Stream.kt`/`Meta.kt`, the `*Dto`s +
   mappers, `core/util/EpgGuide.kt`, `PlayerMediaSourceFactory.kt`,
   `PlayerRuntimeControllerTracks.kt`, `AuthSignInScreen.kt`, `MainActivity.kt`, `NuvioNavHost.kt`,

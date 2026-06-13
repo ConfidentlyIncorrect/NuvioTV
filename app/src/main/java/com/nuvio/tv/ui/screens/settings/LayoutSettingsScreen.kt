@@ -96,7 +96,8 @@ private enum class LayoutSettingsSection {
     STREAMS,
     CONTINUE_WATCHING,
     FOCUSED_POSTER,
-    POSTER_CARD_STYLE
+    POSTER_CARD_STYLE,
+    APP_EXIT
 }
 
 @Composable
@@ -116,6 +117,7 @@ fun LayoutSettingsContent(
     var continueWatchingExpanded by rememberSaveable { mutableStateOf(false) }
     var focusedPosterExpanded by rememberSaveable { mutableStateOf(false) }
     var posterCardStyleExpanded by rememberSaveable { mutableStateOf(false) }
+    var appExitExpanded by rememberSaveable { mutableStateOf(false) }
     var showCwSortModeDialog by rememberSaveable { mutableStateOf(false) }
     var showStreamBadgePositionDialog by rememberSaveable { mutableStateOf(false) }
 
@@ -126,6 +128,7 @@ fun LayoutSettingsContent(
     val continueWatchingHeaderFocus = remember { FocusRequester() }
     val focusedPosterHeaderFocus = remember { FocusRequester() }
     val posterCardStyleHeaderFocus = remember { FocusRequester() }
+    val appExitHeaderFocus = remember { FocusRequester() }
     val homeLayoutHeaderFocus = initialFocusRequester ?: defaultHomeLayoutHeaderFocus
 
     var focusedSection by remember { mutableStateOf<LayoutSettingsSection?>(null) }
@@ -164,6 +167,11 @@ fun LayoutSettingsContent(
     LaunchedEffect(posterCardStyleExpanded, focusedSection) {
         if (!posterCardStyleExpanded && focusedSection == LayoutSettingsSection.POSTER_CARD_STYLE) {
             posterCardStyleHeaderFocus.requestFocus()
+        }
+    }
+    LaunchedEffect(appExitExpanded, focusedSection) {
+        if (!appExitExpanded && focusedSection == LayoutSettingsSection.APP_EXIT) {
+            appExitHeaderFocus.requestFocus()
         }
     }
     LaunchedEffect(streamBadgeUiState.serverError) {
@@ -538,6 +546,36 @@ fun LayoutSettingsContent(
                             )
                         },
                         onFocused = { focusedSection = LayoutSettingsSection.DETAIL_PAGE }
+                    )
+                }
+            }
+
+            item(key = "app_exit_section") {
+                CollapsibleSectionCard(
+                    title = stringResource(R.string.layout_section_exit),
+                    description = stringResource(R.string.layout_section_exit_desc),
+                    expanded = appExitExpanded,
+                    onToggle = { appExitExpanded = !appExitExpanded },
+                    focusRequester = appExitHeaderFocus,
+                    onFocused = { focusedSection = LayoutSettingsSection.APP_EXIT }
+                ) {
+                    CompactToggleRow(
+                        title = stringResource(R.string.layout_exit_on_back),
+                        subtitle = stringResource(R.string.layout_exit_on_back_sub),
+                        checked = uiState.exitAppOnBack,
+                        onToggle = {
+                            viewModel.onEvent(LayoutSettingsEvent.SetExitAppOnBack(!uiState.exitAppOnBack))
+                        },
+                        onFocused = { focusedSection = LayoutSettingsSection.APP_EXIT }
+                    )
+                    CompactToggleRow(
+                        title = stringResource(R.string.layout_exit_on_home),
+                        subtitle = stringResource(R.string.layout_exit_on_home_sub),
+                        checked = uiState.exitAppOnHome,
+                        onToggle = {
+                            viewModel.onEvent(LayoutSettingsEvent.SetExitAppOnHome(!uiState.exitAppOnHome))
+                        },
+                        onFocused = { focusedSection = LayoutSettingsSection.APP_EXIT }
                     )
                 }
             }

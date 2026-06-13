@@ -65,6 +65,8 @@ data class LayoutSettingsUiState(
     val detailPageTrailerAutoplayEnabled: Boolean = true,
     val detailPageTrailerAutoplayDelaySeconds: Int = 7,
     val preferExternalMetaAddonDetail: Boolean = false,
+    val exitAppOnBack: Boolean = false,
+    val exitAppOnHome: Boolean = false,
     val hideUnreleasedContent: Boolean = false,
     val showFullReleaseDate: Boolean = true,
     val nextUpFromFurthestEpisode: Boolean = true,
@@ -108,6 +110,8 @@ sealed class LayoutSettingsEvent {
     data class SetDetailPageTrailerAutoplayEnabled(val enabled: Boolean) : LayoutSettingsEvent()
     data class SetDetailPageTrailerAutoplayDelaySeconds(val seconds: Int) : LayoutSettingsEvent()
     data class SetPreferExternalMetaAddonDetail(val enabled: Boolean) : LayoutSettingsEvent()
+    data class SetExitAppOnBack(val enabled: Boolean) : LayoutSettingsEvent()
+    data class SetExitAppOnHome(val enabled: Boolean) : LayoutSettingsEvent()
     data class SetHideUnreleasedContent(val enabled: Boolean) : LayoutSettingsEvent()
     data class SetShowFullReleaseDate(val enabled: Boolean) : LayoutSettingsEvent()
     data class SetNextUpFromFurthestEpisode(val enabled: Boolean) : LayoutSettingsEvent()
@@ -302,6 +306,16 @@ class LayoutSettingsViewModel @Inject constructor(
             }
         }
         viewModelScope.launch {
+            layoutPreferenceDataStore.exitAppOnBack.distinctUntilChanged().collectLatest { enabled ->
+                updateUiStateIfChanged { it.copy(exitAppOnBack = enabled) }
+            }
+        }
+        viewModelScope.launch {
+            layoutPreferenceDataStore.exitAppOnHome.distinctUntilChanged().collectLatest { enabled ->
+                updateUiStateIfChanged { it.copy(exitAppOnHome = enabled) }
+            }
+        }
+        viewModelScope.launch {
             layoutPreferenceDataStore.hideUnreleasedContent.distinctUntilChanged().collectLatest { enabled ->
                 updateUiStateIfChanged { it.copy(hideUnreleasedContent = enabled) }
             }
@@ -361,6 +375,8 @@ class LayoutSettingsViewModel @Inject constructor(
             is LayoutSettingsEvent.SetDetailPageTrailerAutoplayEnabled -> setDetailPageTrailerAutoplayEnabled(event.enabled)
             is LayoutSettingsEvent.SetDetailPageTrailerAutoplayDelaySeconds -> setDetailPageTrailerAutoplayDelaySeconds(event.seconds)
             is LayoutSettingsEvent.SetPreferExternalMetaAddonDetail -> setPreferExternalMetaAddonDetail(event.enabled)
+            is LayoutSettingsEvent.SetExitAppOnBack -> setExitAppOnBack(event.enabled)
+            is LayoutSettingsEvent.SetExitAppOnHome -> setExitAppOnHome(event.enabled)
             is LayoutSettingsEvent.SetHideUnreleasedContent -> setHideUnreleasedContent(event.enabled)
             is LayoutSettingsEvent.SetShowFullReleaseDate -> setShowFullReleaseDate(event.enabled)
             is LayoutSettingsEvent.SetNextUpFromFurthestEpisode -> setNextUpFromFurthestEpisode(event.enabled)
@@ -632,6 +648,16 @@ class LayoutSettingsViewModel @Inject constructor(
             layoutPreferenceDataStore.setPreferExternalMetaAddonDetail(enabled)
             metaRepository.clearCache()
         }
+    }
+
+    private fun setExitAppOnBack(enabled: Boolean) {
+        if (_uiState.value.exitAppOnBack == enabled) return
+        viewModelScope.launch { layoutPreferenceDataStore.setExitAppOnBack(enabled) }
+    }
+
+    private fun setExitAppOnHome(enabled: Boolean) {
+        if (_uiState.value.exitAppOnHome == enabled) return
+        viewModelScope.launch { layoutPreferenceDataStore.setExitAppOnHome(enabled) }
     }
 
     private fun setHideUnreleasedContent(enabled: Boolean) {
