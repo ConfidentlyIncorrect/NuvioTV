@@ -116,7 +116,9 @@ class StreamScreenViewModel @Inject constructor(
     // Addon display-names that returned Comet's "still scraping" marker on the last response.
     private var scrapingAddonNames: Set<String> = emptySet()
     // Series search scope: "episode" (default), "season", or "series". Sent to addons as ?scope=.
-    private var searchScope: String = SEARCH_SCOPE_EPISODE
+    // Seeded from the nav arg so the detail-screen "Search Season/Series" buttons open pre-scoped.
+    private var searchScope: String =
+        savedStateHandle.get<String>("scope")?.takeIf { it.isNotBlank() } ?: SEARCH_SCOPE_EPISODE
 
     private val embeddedStreamGroupName: String by lazy {
         context.getString(R.string.stream_embedded_group)
@@ -158,7 +160,8 @@ class StreamScreenViewModel @Inject constructor(
             episodeName = episodeName,
             runtime = runtime,
             genres = genres,
-            year = year
+            year = year,
+            searchScope = searchScope
         )
     )
     val uiState: StateFlow<StreamScreenUiState> = _uiState.asStateFlow()

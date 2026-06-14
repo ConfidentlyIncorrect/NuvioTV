@@ -351,6 +351,24 @@ fun NuvioNavHost(
                             contentLanguage = contentLanguage
                         )
                     )
+                },
+                onSearchScopeClick = { videoId, contentType, contentId, title, poster, backdrop, logo, season, scope ->
+                    navController.navigate(
+                        Screen.Stream.createRoute(
+                            videoId = videoId,
+                            contentType = contentType,
+                            title = title,
+                            poster = poster,
+                            backdrop = backdrop,
+                            logo = logo,
+                            season = season,
+                            contentId = contentId,
+                            contentName = title,
+                            manualSelection = true,
+                            returnToDetailOnBack = true,
+                            scope = scope
+                        )
+                    )
                 }
             )
         }
@@ -440,6 +458,11 @@ fun NuvioNavHost(
                     type = NavType.StringType
                     nullable = true
                     defaultValue = null
+                },
+                navArgument("scope") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = "episode"
                 }
             )
         ) { backStackEntry ->

@@ -238,7 +238,18 @@ fun MetaDetailsScreen(
         year: String?,
         runtime: Int?,
         contentLanguage: String?
-    ) -> Unit = { _, _, _, _, _, _, _, _, _, _, _, _, _, _ -> }
+    ) -> Unit = { _, _, _, _, _, _, _, _, _, _, _, _, _, _ -> },
+    onSearchScopeClick: (
+        videoId: String,
+        contentType: String,
+        contentId: String,
+        title: String,
+        poster: String?,
+        backdrop: String?,
+        logo: String?,
+        season: Int?,
+        scope: String
+    ) -> Unit = { _, _, _, _, _, _, _, _, _ -> }
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val effectiveAutoplayEnabled by viewModel.effectiveAutoplayEnabled.collectAsStateWithLifecycle(
@@ -543,6 +554,19 @@ fun MetaDetailsScreen(
                             meta.resolveContentLanguage()
                         )
                     },
+                    onSearchScopeClick = { videoId, season, scope ->
+                        onSearchScopeClick(
+                            videoId,
+                            meta.apiType,
+                            meta.id,
+                            meta.name,
+                            meta.poster,
+                            meta.backdropUrl,
+                            meta.logo,
+                            season,
+                            scope
+                        )
+                    },
                     showManualPlayOption = effectiveAutoplayEnabled,
                     onPlayButtonFocused = { viewModel.onEvent(MetaDetailsEvent.OnPlayButtonFocused) },
                     onToggleLibrary = { viewModel.onEvent(MetaDetailsEvent.OnToggleLibrary) },
@@ -750,6 +774,56 @@ fun MetaDetailsScreen(
     )
 }
 
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun ScopeSearchRow(
+    onSearchSeason: () -> Unit,
+    onSearchSeries: () -> Unit
+) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md),
+        modifier = Modifier.padding(
+            horizontal = NuvioTheme.spacing.xxxl,
+            vertical = NuvioTheme.spacing.sm
+        )
+    ) {
+        ScopeSearchButton(label = "Search Whole Season", onClick = onSearchSeason)
+        ScopeSearchButton(label = "Search Whole Series", onClick = onSearchSeries)
+    }
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun ScopeSearchButton(
+    label: String,
+    onClick: () -> Unit
+) {
+    var isFocused by remember { mutableStateOf(false) }
+    Card(
+        onClick = onClick,
+        modifier = Modifier.onFocusChanged { isFocused = it.isFocused },
+        colors = CardDefaults.colors(
+            containerColor = NuvioTheme.colors.BackgroundCard,
+            focusedContainerColor = NuvioTheme.colors.Secondary
+        ),
+        border = CardDefaults.border(
+            focusedBorder = Border(
+                border = BorderStroke(NuvioTheme.spacing.xxs, NuvioTheme.colors.FocusRing),
+                shape = RoundedCornerShape(20.dp)
+            )
+        ),
+        shape = CardDefaults.shape(shape = RoundedCornerShape(20.dp)),
+        scale = CardDefaults.scale(focusedScale = 1.05f)
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.titleMedium,
+            color = if (isFocused) NuvioTheme.colors.OnSecondary else NuvioTheme.colors.TextPrimary,
+            modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp)
+        )
+    }
+}
+
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @OptIn(ExperimentalTvMaterial3Api::class, ExperimentalComposeUiApi::class, ExperimentalFoundationApi::class)
 @Composable
@@ -797,6 +871,7 @@ private fun MetaDetailsContent(
     onEpisodeManualPlayClick: (Video) -> Unit,
     onPlayClick: (String) -> Unit,
     onPlayManuallyClick: (String) -> Unit,
+    onSearchScopeClick: (videoId: String, season: Int?, scope: String) -> Unit = { _, _, _ -> },
     showManualPlayOption: Boolean,
     onPlayButtonFocused: () -> Unit,
     onToggleLibrary: () -> Unit,
@@ -1602,6 +1677,24 @@ private fun MetaDetailsContent(
                             selectedTabFocusRequester = selectedSeasonFocusRequester,
                             upFocusRequester = heroPlayFocusRequester,
                             downFocusRequester = seasonDownFocusRequester
+                        )
+                    }
+                }
+            }
+            if (showEpisodesRow) {
+                item(key = "scope_search", contentType = "scope_search") {
+                    Box(modifier = Modifier.bringIntoViewResponder(noVerticalScrollResponder)) {
+                        ScopeSearchRow(
+                            onSearchSeason = {
+                                episodesForSeason.firstOrNull()?.id?.let {
+                                    onSearchScopeClick(it, selectedSeason, "season")
+                                }
+                            },
+                            onSearchSeries = {
+                                episodesForSeason.firstOrNull()?.id?.let {
+                                    onSearchScopeClick(it, selectedSeason, "series")
+                                }
+                            }
                         )
                     }
                 }
