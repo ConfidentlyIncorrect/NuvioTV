@@ -266,6 +266,38 @@ object NetworkModule {
     fun provideAddonApi(retrofit: Retrofit): AddonApi =
         retrofit.create(AddonApi::class.java)
 
+    // Patient client for STREAM requests only: no read/call timeout, so the client waits for the
+    // addon's definite response (results, empty, or error) instead of giving up on a slow scrape
+    // (e.g. Comet doing a whole-season foreground scrape). connectTimeout still fails fast on a dead
+    // server, and coroutine cancellation (leaving the screen / picking a stream) aborts a hung call.
+    @Provides
+    @Singleton
+    @Named("addonStream")
+    fun provideAddonStreamOkHttpClient(okHttpClient: OkHttpClient): OkHttpClient =
+        okHttpClient.newBuilder()
+            .readTimeout(0, TimeUnit.SECONDS)
+            .callTimeout(0, TimeUnit.SECONDS)
+            .build()
+
+    @Provides
+    @Singleton
+    @Named("addonStream")
+    fun provideAddonStreamRetrofit(
+        @Named("addonStream") okHttpClient: OkHttpClient,
+        moshi: Moshi
+    ): Retrofit =
+        Retrofit.Builder()
+            .baseUrl("https://placeholder.nuvio.tv/")
+            .client(okHttpClient)
+            .addConverterFactory(MoshiConverterFactory.create(moshi))
+            .build()
+
+    @Provides
+    @Singleton
+    @Named("addonStream")
+    fun provideAddonStreamApi(@Named("addonStream") retrofit: Retrofit): AddonApi =
+        retrofit.create(AddonApi::class.java)
+
     @Provides
     @Singleton
     @Named("torbox")

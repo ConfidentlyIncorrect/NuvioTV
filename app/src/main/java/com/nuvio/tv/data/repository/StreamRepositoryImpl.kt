@@ -38,7 +38,7 @@ private const val TAG = "StreamRepositoryImpl"
 
 class StreamRepositoryImpl @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val api: AddonApi,
+    @javax.inject.Named("addonStream") private val api: AddonApi,
     private val addonRepository: AddonRepository,
     private val pluginManager: PluginManager,
     private val tmdbService: TmdbService,
