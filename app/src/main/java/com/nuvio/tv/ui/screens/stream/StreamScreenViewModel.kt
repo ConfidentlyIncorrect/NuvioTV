@@ -46,6 +46,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -61,6 +62,13 @@ import javax.inject.Inject
 
 private const val TAG = "StreamScreenViewModel"
 private const val DIRECT_AUTOPLAY_HARD_TIMEOUT_MS = 60_000L
+
+// Live stream-list refresh: while a progressive addon (Comet) reports it's still scraping (via a
+// marker stream), re-poll just that addon and merge new results into the already-open list.
+private const val PROGRESSIVE_STREAM_UPDATES = true
+private const val PROGRESSIVE_POLL_INTERVAL_MS = 3_000L
+private const val PROGRESSIVE_POLL_MAX_ATTEMPTS = 45        // ~135s cap (covers a cold multi-Cloudflare scrape)
+private const val PROGRESSIVE_POLL_NO_GROWTH_STOP = 20      // safety: stop if nothing new arrives for ~60s
 
 @HiltViewModel
 class StreamScreenViewModel @Inject constructor(
@@ -102,6 +110,11 @@ class StreamScreenViewModel @Inject constructor(
     private var streamBadgePresentationJob: Job? = null
     private var streamBadgePresentationRequestId = 0L
     private var badgedAddonNames: Set<String> = emptySet()
+    // Live progressive-scrape refresh state.
+    private var progressivePollJob: Job? = null
+    private var progressivePollStarted = false
+    // Addon display-names that returned Comet's "still scraping" marker on the last response.
+    private var scrapingAddonNames: Set<String> = emptySet()
 
     private val embeddedStreamGroupName: String by lazy {
         context.getString(R.string.stream_embedded_group)
@@ -316,6 +329,10 @@ class StreamScreenViewModel @Inject constructor(
         streamBadgePresentationJob?.cancel()
         streamBadgePresentationRequestId += 1
         if (resumeBaselineStreams == null) badgedAddonNames = emptySet()
+        progressivePollJob?.cancel()
+        progressivePollJob = null
+        progressivePollStarted = false
+        scrapingAddonNames = emptySet()
         sourceChipErrorDismissJob?.cancel()
         val newScope = kotlinx.coroutines.CoroutineScope(viewModelScope.coroutineContext + kotlinx.coroutines.SupervisorJob())
         streamLoadScope = newScope
@@ -440,8 +457,11 @@ class StreamScreenViewModel @Inject constructor(
             } else null
 
             fun applySuccess(addonStreamGroups: List<AddonStreams>, isAllLoaded: Boolean) {
+                // Pull out Comet's "still scraping" control markers: they drive live polling but
+                // must never appear in the list as a (non-playable) row.
+                val cleanedGroups = stripScrapingMarkers(addonStreamGroups)
                 val orderedAddonStreams = StreamAutoPlaySelector.orderAddonStreams(
-                    addonStreamGroups,
+                    cleanedGroups,
                     installedAddonOrder
                 )
 
@@ -735,6 +755,12 @@ class StreamScreenViewModel @Inject constructor(
                     lastSuccessData?.let { applySuccess(it, isAllLoaded = true) }
                 }
                 markRemainingSourceChipsAsError()
+                // Manual browsing only: keep the open list filling in while a progressive addon
+                // (Comet) is still scraping. Skipped in direct-autoplay flows where the user isn't
+                // looking at the list and the outer timeout logic owns the stream state.
+                if (!directFlowActive) {
+                    maybeStartProgressivePolling(installedAddonOrder)
+                }
                 if (directAutoPlayFlowEnabledForSession && !resolvedAutoPlayTarget) {
                     directAutoPlayFlowEnabledForSession = false
                     updateUiStateIfChanged {
@@ -977,6 +1003,141 @@ class StreamScreenViewModel @Inject constructor(
                 if (remaining.size == state.sourceChips.size) state else state.copy(sourceChips = remaining)
             }
         }
+    }
+
+    /**
+     * Remove Comet's "still scraping" marker streams from [groups], recording which addons are
+     * still working in [scrapingAddonNames]. A group reduced to nothing but a marker is dropped so
+     * no empty section appears.
+     */
+    private fun stripScrapingMarkers(groups: List<AddonStreams>): List<AddonStreams> {
+        if (groups.none { group -> group.streams.any { it.isScrapingMarker() } }) {
+            scrapingAddonNames = emptySet()
+            return groups
+        }
+        val scraping = mutableSetOf<String>()
+        val cleaned = groups.mapNotNull { group ->
+            val markerHere = group.streams.any { it.isScrapingMarker() }
+            if (!markerHere) {
+                group
+            } else {
+                scraping += group.addonName
+                val realStreams = group.streams.filterNot { it.isScrapingMarker() }
+                if (realStreams.isEmpty()) null else group.copy(streams = realStreams)
+            }
+        }
+        scrapingAddonNames = scraping
+        return cleaned
+    }
+
+    /** Begin the live re-poll loop if a progressive addon is still scraping. Starts at most once. */
+    private fun maybeStartProgressivePolling(installedAddonOrder: List<String>) {
+        if (!PROGRESSIVE_STREAM_UPDATES) return
+        if (progressivePollStarted || scrapingAddonNames.isEmpty()) return
+        progressivePollStarted = true
+        val scope = streamLoadScope ?: return
+        progressivePollJob = scope.launch { progressivePollLoop(installedAddonOrder) }
+    }
+
+    private suspend fun progressivePollLoop(installedAddonOrder: List<String>) {
+        val byName = addonRepository.getInstalledAddons().first().enabledAddons()
+            .associateBy { it.displayName }
+        var attempts = 0
+        var noGrowthPolls = 0
+        var lastTotal = _uiState.value.allStreams.size
+        while (attempts < PROGRESSIVE_POLL_MAX_ATTEMPTS && scrapingAddonNames.isNotEmpty()) {
+            delay(PROGRESSIVE_POLL_INTERVAL_MS)
+            currentCoroutineContext().ensureActive()
+            attempts++
+            for (name in scrapingAddonNames.toList()) {
+                val addon = byName[name] ?: continue
+                val result = try {
+                    streamRepository.getStreamsFromAddon(
+                        baseUrl = addon.baseUrl,
+                        type = contentType,
+                        videoId = videoId,
+                        poll = true
+                    )
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    Log.w(TAG, "Progressive poll failed for $name: ${e.message}")
+                    continue
+                }
+                if (result is NetworkResult.Success) {
+                    mergePolledAddonStreams(addon, result.data, installedAddonOrder)
+                }
+            }
+            val total = _uiState.value.allStreams.size
+            if (total > lastTotal) {
+                noGrowthPolls = 0
+                lastTotal = total
+            } else {
+                noGrowthPolls++
+                if (noGrowthPolls >= PROGRESSIVE_POLL_NO_GROWTH_STOP) break
+            }
+        }
+        Log.d(TAG, "Progressive polling finished after $attempts poll(s), ${_uiState.value.allStreams.size} stream(s)")
+    }
+
+    /**
+     * Replace [addon]'s group with the latest poll snapshot (each poll is a full snapshot, so no
+     * per-stream dedup is needed) and recompute the flattened/filtered lists. Existing badges are
+     * preserved so they don't flicker, and the addon is re-queued for badging.
+     */
+    private fun mergePolledAddonStreams(
+        addon: com.nuvio.tv.domain.model.Addon,
+        rawStreams: List<Stream>,
+        installedAddonOrder: List<String>
+    ) {
+        val name = addon.displayName
+        val stillScraping = rawStreams.any { it.isScrapingMarker() }
+        scrapingAddonNames = if (stillScraping) scrapingAddonNames + name else scrapingAddonNames - name
+
+        val realStreams = rawStreams
+            .filterNot { it.isScrapingMarker() }
+            .map { it.copy(addonName = name, addonLogo = addon.logo) }
+        if (realStreams.isEmpty()) return
+
+        updateUiStateIfChanged { state ->
+            val existingBadged = state.allStreams
+                .filter { it.badges.isNotEmpty() }
+                .associateBy { it.badgeMergeKey() }
+            val badgedStreams = if (existingBadged.isEmpty()) {
+                realStreams
+            } else {
+                realStreams.map { s ->
+                    val existing = existingBadged[s.badgeMergeKey()]
+                    if (existing != null && s.badges.isEmpty()) s.copy(badges = existing.badges) else s
+                }
+            }
+            val newGroup = AddonStreams(addonName = name, addonLogo = addon.logo, streams = badgedStreams)
+            val groups = state.addonStreams
+            val updatedGroups = if (groups.any { it.addonName == name }) {
+                groups.map { if (it.addonName == name) newGroup else it }
+            } else {
+                groups + newGroup
+            }
+            val orderedGroups = StreamAutoPlaySelector.orderAddonStreams(updatedGroups, installedAddonOrder)
+            if (orderedGroups == state.addonStreams) {
+                state
+            } else {
+                val allStreams = orderedGroups.flatMap { it.streams }
+                val currentFilter = state.selectedAddonFilter
+                val filteredStreams = if (currentFilter == null) {
+                    allStreams
+                } else {
+                    allStreams.filter { it.addonName == currentFilter }
+                }
+                state.copy(
+                    addonStreams = orderedGroups,
+                    allStreams = allStreams,
+                    filteredStreams = filteredStreams
+                )
+            }
+        }
+        // Allow the badge pipeline to (re)process this addon's freshly merged streams.
+        badgedAddonNames = badgedAddonNames - name
+        scheduleStreamBadgePresentation(_uiState.value.addonStreams.filter { it.addonName == name })
     }
 
     private fun com.nuvio.tv.domain.model.Addon.supportsStreamResourceForChip(type: String): Boolean {

@@ -26,11 +26,14 @@ interface StreamRepository {
      * @param baseUrl The addon base URL
      * @param type The content type
      * @param videoId The video ID
+     * @param poll When true, adds ?poll=1 so a progressive addon (Comet) returns its current
+     *   results without kicking a new scrape. Used to live-refresh an open stream list.
      * @return NetworkResult containing list of streams
      */
     suspend fun getStreamsFromAddon(
         baseUrl: String,
         type: String,
-        videoId: String
+        videoId: String,
+        poll: Boolean = false
     ): NetworkResult<List<Stream>>
 }

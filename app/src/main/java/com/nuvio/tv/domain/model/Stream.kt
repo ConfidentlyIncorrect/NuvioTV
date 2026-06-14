@@ -132,6 +132,17 @@ data class Stream(
     fun getDisplayDescription(): String? = description ?: title
 
     /**
+     * True if this is Comet's progressive-scrape control marker — not a playable stream but a
+     * signal that the addon is still scraping more sources. The stream screen hides it from the
+     * list and keeps polling (?poll=1) until it disappears.
+     */
+    fun isScrapingMarker(): Boolean = url == SCRAPING_MARKER_URL
+
+    companion object {
+        const val SCRAPING_MARKER_URL = "https://comet.feels.legal/scraping"
+    }
+
+    /**
      * Returns a stable key for use in LazyColumn/LazyRow.
      * Incorporates all content-identifying fields so the key doesn't change
      * when the list recomposes or items shift position. The [occurrence] parameter
