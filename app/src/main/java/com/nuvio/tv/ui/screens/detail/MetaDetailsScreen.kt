@@ -778,8 +778,15 @@ fun MetaDetailsScreen(
 @Composable
 private fun ScopeSearchRow(
     onSearchSeason: () -> Unit,
-    onSearchSeries: () -> Unit
+    onSearchSeries: () -> Unit,
+    focusRequester: FocusRequester,
+    upFocusRequester: FocusRequester? = null,
+    downFocusRequester: FocusRequester? = null
 ) {
+    val verticalFocus = Modifier.focusProperties {
+        upFocusRequester?.let { up = it }
+        downFocusRequester?.let { down = it }
+    }
     Row(
         horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md),
         modifier = Modifier.padding(
@@ -787,8 +794,16 @@ private fun ScopeSearchRow(
             vertical = NuvioTheme.spacing.sm
         )
     ) {
-        ScopeSearchButton(label = "Search Whole Season", onClick = onSearchSeason)
-        ScopeSearchButton(label = "Search Whole Series", onClick = onSearchSeries)
+        ScopeSearchButton(
+            label = "Search Whole Season",
+            onClick = onSearchSeason,
+            modifier = verticalFocus.focusRequester(focusRequester)
+        )
+        ScopeSearchButton(
+            label = "Search Whole Series",
+            onClick = onSearchSeries,
+            modifier = verticalFocus
+        )
     }
 }
 
@@ -796,12 +811,13 @@ private fun ScopeSearchRow(
 @Composable
 private fun ScopeSearchButton(
     label: String,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     var isFocused by remember { mutableStateOf(false) }
     Card(
         onClick = onClick,
-        modifier = Modifier.onFocusChanged { isFocused = it.isFocused },
+        modifier = modifier.onFocusChanged { isFocused = it.isFocused },
         colors = CardDefaults.colors(
             containerColor = NuvioTheme.colors.BackgroundCard,
             focusedContainerColor = NuvioTheme.colors.Secondary
@@ -964,6 +980,7 @@ private fun MetaDetailsContent(
         }
     }
     val selectedSeasonFocusRequester = remember { FocusRequester() }
+    val scopeSearchFocusRequester = remember { FocusRequester() }
     val heroPlayFocusRequester = remember { FocusRequester() }
     val castTabFocusRequester = remember { FocusRequester() }
     val moreLikeTabFocusRequester = remember { FocusRequester() }
@@ -1676,7 +1693,7 @@ private fun MetaDetailsContent(
                             onSeasonLongPress = { seasonOptionsDialogSeason = it },
                             selectedTabFocusRequester = selectedSeasonFocusRequester,
                             upFocusRequester = heroPlayFocusRequester,
-                            downFocusRequester = seasonDownFocusRequester
+                            downFocusRequester = if (showEpisodesRow) scopeSearchFocusRequester else seasonDownFocusRequester
                         )
                     }
                 }
@@ -1694,7 +1711,10 @@ private fun MetaDetailsContent(
                                 episodesForSeason.firstOrNull()?.id?.let {
                                     onSearchScopeClick(it, selectedSeason, "series")
                                 }
-                            }
+                            },
+                            focusRequester = scopeSearchFocusRequester,
+                            upFocusRequester = if (showSeasonTabs) selectedSeasonFocusRequester else heroPlayFocusRequester,
+                            downFocusRequester = seasonDownFocusRequester
                         )
                     }
                 }
@@ -1720,7 +1740,7 @@ private fun MetaDetailsContent(
                             onOpenEpisodeComments = episodeCommentsClick,
                             showOpenEpisodeComments = shouldShowCommentsSection,
                             onMarkPreviousEpisodesWatched = onMarkPreviousEpisodesWatched,
-                            upFocusRequester = if (showSeasonTabs) selectedSeasonFocusRequester else heroPlayFocusRequester,
+                            upFocusRequester = scopeSearchFocusRequester,
                             downFocusRequester = episodesDownFocusRequester,
                             episodeFocusRequesters = seasonEpisodeFocusRequesters,
                             restoreEpisodeId = if (pendingRestoreType == RestoreTarget.EPISODE) pendingRestoreEpisodeId else null,
