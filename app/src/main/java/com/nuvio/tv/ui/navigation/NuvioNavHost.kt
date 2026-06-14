@@ -352,7 +352,7 @@ fun NuvioNavHost(
                         )
                     )
                 },
-                onSearchScopeClick = { videoId, contentType, contentId, title, poster, backdrop, logo, season, scope ->
+                onSearchScopeClick = { videoId, contentType, contentId, title, poster, backdrop, logo, season, genres, year, scope ->
                     navController.navigate(
                         Screen.Stream.createRoute(
                             videoId = videoId,
@@ -362,6 +362,8 @@ fun NuvioNavHost(
                             backdrop = backdrop,
                             logo = logo,
                             season = season,
+                            genres = genres,
+                            year = year,
                             contentId = contentId,
                             contentName = title,
                             manualSelection = true,

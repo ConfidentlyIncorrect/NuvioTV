@@ -248,8 +248,10 @@ fun MetaDetailsScreen(
         backdrop: String?,
         logo: String?,
         season: Int?,
+        genres: String?,
+        year: String?,
         scope: String
-    ) -> Unit = { _, _, _, _, _, _, _, _, _ -> }
+    ) -> Unit = { _, _, _, _, _, _, _, _, _, _, _ -> }
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val effectiveAutoplayEnabled by viewModel.effectiveAutoplayEnabled.collectAsStateWithLifecycle(
@@ -564,6 +566,8 @@ fun MetaDetailsScreen(
                             meta.backdropUrl,
                             meta.logo,
                             season,
+                            genresString,
+                            yearString,
                             scope
                         )
                     },
