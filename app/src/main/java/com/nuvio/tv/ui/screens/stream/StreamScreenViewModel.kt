@@ -115,6 +115,8 @@ class StreamScreenViewModel @Inject constructor(
     private var progressivePollStarted = false
     // Addon display-names that returned Comet's "still scraping" marker on the last response.
     private var scrapingAddonNames: Set<String> = emptySet()
+    // Series search scope: "episode" (default), "season", or "series". Sent to addons as ?scope=.
+    private var searchScope: String = SEARCH_SCOPE_EPISODE
 
     private val embeddedStreamGroupName: String by lazy {
         context.getString(R.string.stream_embedded_group)
@@ -287,6 +289,7 @@ class StreamScreenViewModel @Inject constructor(
                 }
             }
             StreamScreenEvent.OnRetry -> loadStreams()
+            is StreamScreenEvent.OnSearchScopeSelected -> setSearchScope(event.scope)
             StreamScreenEvent.OnBackPress -> { /* Handle in screen */ }
             StreamScreenEvent.OnResume -> {
                 // If loading was cancelled (e.g. user went to player) and
@@ -648,7 +651,8 @@ class StreamScreenViewModel @Inject constructor(
                     type = contentType,
                     videoId = videoId,
                     season = season,
-                    episode = episode
+                    episode = episode,
+                    scope = searchScope.takeIf { it != SEARCH_SCOPE_EPISODE }
                 ).collect { result ->
                     when (result) {
                         is NetworkResult.Success -> {
@@ -1056,7 +1060,8 @@ class StreamScreenViewModel @Inject constructor(
                         baseUrl = addon.baseUrl,
                         type = contentType,
                         videoId = videoId,
-                        poll = true
+                        poll = true,
+                        scope = searchScope.takeIf { it != SEARCH_SCOPE_EPISODE }
                     )
                 } catch (e: Exception) {
                     if (e is kotlinx.coroutines.CancellationException) throw e
@@ -1231,6 +1236,15 @@ class StreamScreenViewModel @Inject constructor(
         return meta.runtime
             ?.let { Regex("(\\d+)").find(it)?.groupValues?.getOrNull(1) }
             ?.toIntOrNull()
+    }
+
+    private fun setSearchScope(scope: String) {
+        if (scope == searchScope) return
+        searchScope = scope
+        // Reflect in UI (highlights the active button) and reset the addon filter — the result set
+        // changes with scope. loadStreams() re-queries every addon with the new ?scope=.
+        _uiState.update { it.copy(searchScope = scope, selectedAddonFilter = null) }
+        loadStreams()
     }
 
     private fun filterByAddon(addonName: String?) {

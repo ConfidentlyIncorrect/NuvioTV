@@ -400,6 +400,9 @@ fun StreamScreen(
                     availableAddons = uiState.availableAddons,
                     sourceChips = uiState.sourceChips,
                     selectedAddonFilter = uiState.selectedAddonFilter,
+                    isSeries = uiState.isSeries,
+                    searchScope = uiState.searchScope,
+                    onSearchScopeSelected = { viewModel.onEvent(StreamScreenEvent.OnSearchScopeSelected(it)) },
                     showFileSizeBadges = streamBadgeSettings.showFileSizeBadges,
                     showAddonLogo = streamBadgeSettings.showAddonLogo,
                     badgePlacement = streamBadgeSettings.badgePlacement,
@@ -718,6 +721,9 @@ private fun RightStreamSection(
     availableAddons: List<String>,
     sourceChips: List<SourceChipItem>,
     selectedAddonFilter: String?,
+    isSeries: Boolean = false,
+    searchScope: String = SEARCH_SCOPE_EPISODE,
+    onSearchScopeSelected: (String) -> Unit = {},
     showFileSizeBadges: Boolean,
     showAddonLogo: Boolean,
     badgePlacement: StreamBadgePlacement,
@@ -774,6 +780,17 @@ private fun RightStreamSection(
             .padding(top = NuvioTheme.spacing.xxxl, end = NuvioTheme.spacing.xxxl, bottom = NuvioTheme.spacing.xxxl)
     ) {
         val chipRowHeight = NuvioTheme.spacing.huge
+
+        // Scope selector (series only): Episode / Season / Series — search whole-season or
+        // whole-series packs instead of just this episode. Useful when a show's episode numbering
+        // doesn't line up with releases (e.g. renumbered docuseries).
+        if (isSeries) {
+            ScopeSelectorRow(
+                searchScope = searchScope,
+                onScopeSelected = onSearchScopeSelected
+            )
+            Spacer(modifier = Modifier.height(NuvioTheme.spacing.sm))
+        }
 
         // Addon filter chips
         Box(modifier = Modifier.height(chipRowHeight)) {
@@ -946,6 +963,31 @@ private fun AddonFilterChips(
                 isSelectable = isSelectable,
                 onClick = { if (isSelectable) onAddonSelected(addon) },
                 modifier = Modifier.focusRequester(focusRequesters[i + 1])
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun ScopeSelectorRow(
+    searchScope: String,
+    onScopeSelected: (String) -> Unit
+) {
+    val options = listOf(
+        SEARCH_SCOPE_EPISODE to "Episode",
+        SEARCH_SCOPE_SEASON to "Season",
+        SEARCH_SCOPE_SERIES to "Series"
+    )
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.lg),
+        modifier = Modifier.padding(horizontal = NuvioTheme.spacing.sm, vertical = NuvioTheme.spacing.xs)
+    ) {
+        options.forEach { (value, label) ->
+            SourceStatusFilterChip(
+                name = label,
+                isSelected = searchScope == value,
+                onClick = { onScopeSelected(value) }
             )
         }
     }

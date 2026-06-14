@@ -18,7 +18,8 @@ interface StreamRepository {
         type: String,
         videoId: String,
         season: Int? = null,
-        episode: Int? = null
+        episode: Int? = null,
+        scope: String? = null
     ): Flow<NetworkResult<List<AddonStreams>>>
 
     /**
@@ -28,12 +29,15 @@ interface StreamRepository {
      * @param videoId The video ID
      * @param poll When true, adds ?poll=1 so a progressive addon (Comet) returns its current
      *   results without kicking a new scrape. Used to live-refresh an open stream list.
+     * @param scope Optional search scope ("season"/"series") sent as ?scope= so a progressive addon
+     *   (Comet) returns whole-season / whole-series packs instead of just the requested episode.
      * @return NetworkResult containing list of streams
      */
     suspend fun getStreamsFromAddon(
         baseUrl: String,
         type: String,
         videoId: String,
-        poll: Boolean = false
+        poll: Boolean = false,
+        scope: String? = null
     ): NetworkResult<List<Stream>>
 }

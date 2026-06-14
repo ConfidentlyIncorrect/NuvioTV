@@ -60,7 +60,8 @@ class StreamRepositoryImpl @Inject constructor(
         type: String,
         videoId: String,
         season: Int?,
-        episode: Int?
+        episode: Int?,
+        scope: String?
     ): Flow<NetworkResult<List<AddonStreams>>> = flow {
         emit(NetworkResult.Loading)
 
@@ -97,7 +98,7 @@ class StreamRepositoryImpl @Inject constructor(
                 streamAddons.forEach { addon ->
                     launch {
                         try {
-                            val streamsResult = getStreamsFromAddon(addon.baseUrl, type, videoId)
+                            val streamsResult = getStreamsFromAddon(addon.baseUrl, type, videoId, scope = scope)
                             when (streamsResult) {
                                 is NetworkResult.Success -> {
                                     if (streamsResult.data.isNotEmpty()) {
@@ -431,18 +432,24 @@ class StreamRepositoryImpl @Inject constructor(
         baseUrl: String,
         type: String,
         videoId: String,
-        poll: Boolean
+        poll: Boolean,
+        scope: String?
     ): NetworkResult<List<Stream>> {
         val cleanBaseUrl = baseUrl.trimEnd('/')
         val queryStart = cleanBaseUrl.indexOf('?')
         val basePath = if (queryStart >= 0) cleanBaseUrl.substring(0, queryStart).trimEnd('/') else cleanBaseUrl
         val baseQuery = if (queryStart >= 0) cleanBaseUrl.substring(queryStart) else ""
-        // ?poll=1 tells a progressive addon (Comet) to return its current cache without starting a
-        // new scrape, so repeated polls converge and the in-progress marker eventually clears.
-        val effectiveQuery = if (poll) {
-            if (baseQuery.isEmpty()) "?poll=1" else "$baseQuery&poll=1"
-        } else {
-            baseQuery
+        // Extra query flags for progressive addons (Comet); harmlessly ignored by others.
+        //   poll=1  -> return current cache without starting a new scrape (live refresh)
+        //   scope=  -> whole-season / whole-series packs instead of just this episode
+        val extraParams = buildList {
+            if (poll) add("poll=1")
+            if (!scope.isNullOrBlank()) add("scope=$scope")
+        }
+        val effectiveQuery = when {
+            extraParams.isEmpty() -> baseQuery
+            baseQuery.isEmpty() -> "?" + extraParams.joinToString("&")
+            else -> baseQuery + "&" + extraParams.joinToString("&")
         }
         val encodedType = encodePathSegment(type)
         val encodedVideoId = encodePathSegment(videoId)

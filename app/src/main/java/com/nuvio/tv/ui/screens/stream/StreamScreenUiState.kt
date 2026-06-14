@@ -35,10 +35,18 @@ data class StreamScreenUiState(
     val autoPlayStream: Stream? = null,
     val autoPlayPlaybackInfo: StreamPlaybackInfo? = null,
     val error: String? = null,
-    val playbackErrorMessage: String? = null
+    val playbackErrorMessage: String? = null,
+    // Search scope for series: "episode" (default), "season" (whole-season packs), "series" (whole
+    // series). Sent to addons as ?scope= so packs surface past the per-episode filter.
+    val searchScope: String = SEARCH_SCOPE_EPISODE
 ) {
     val isEpisode: Boolean get() = season != null && episode != null
+    val isSeries: Boolean get() = season != null
 }
+
+const val SEARCH_SCOPE_EPISODE = "episode"
+const val SEARCH_SCOPE_SEASON = "season"
+const val SEARCH_SCOPE_SERIES = "series"
 
 sealed class StreamScreenEvent {
     data class OnAddonFilterSelected(val addonName: String?) : StreamScreenEvent()
@@ -47,4 +55,5 @@ sealed class StreamScreenEvent {
     data object OnRetry : StreamScreenEvent()
     data object OnBackPress : StreamScreenEvent()
     data object OnResume : StreamScreenEvent()
+    data class OnSearchScopeSelected(val scope: String) : StreamScreenEvent()
 }
