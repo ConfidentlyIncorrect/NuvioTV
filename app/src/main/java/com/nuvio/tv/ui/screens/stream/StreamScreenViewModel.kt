@@ -67,8 +67,11 @@ private const val DIRECT_AUTOPLAY_HARD_TIMEOUT_MS = 60_000L
 // marker stream), re-poll just that addon and merge new results into the already-open list.
 private const val PROGRESSIVE_STREAM_UPDATES = true
 private const val PROGRESSIVE_POLL_INTERVAL_MS = 3_000L
-private const val PROGRESSIVE_POLL_MAX_ATTEMPTS = 45        // ~135s cap (covers a cold multi-Cloudflare scrape)
-private const val PROGRESSIVE_POLL_NO_GROWTH_STOP = 20      // safety: stop if nothing new arrives for ~60s
+// Keep polling as long as the addon's marker says it's STILL scraping. A slow Prowlarr/Cloudflare
+// scrape can take several minutes, and its results only land in the cache when it finishes — so we
+// must not give up early (no-growth) or the late results never reach the open list. The cap is just
+// a safety ceiling for a stuck marker (~6 min); a finished scrape clears the marker and ends sooner.
+private const val PROGRESSIVE_POLL_MAX_ATTEMPTS = 120       // ~6 min hard ceiling
 
 @HiltViewModel
 class StreamScreenViewModel @Inject constructor(
@@ -1050,8 +1053,9 @@ class StreamScreenViewModel @Inject constructor(
         val byName = addonRepository.getInstalledAddons().first().enabledAddons()
             .associateBy { it.displayName }
         var attempts = 0
-        var noGrowthPolls = 0
-        var lastTotal = _uiState.value.allStreams.size
+        // Keep going while the marker (scrapingAddonNames) says the addon is still scraping. We do
+        // NOT stop on no-growth — a slow scrape produces nothing for minutes, then dumps its results
+        // all at once when it finishes. The while-condition exits as soon as the marker clears.
         while (attempts < PROGRESSIVE_POLL_MAX_ATTEMPTS && scrapingAddonNames.isNotEmpty()) {
             delay(PROGRESSIVE_POLL_INTERVAL_MS)
             currentCoroutineContext().ensureActive()
@@ -1074,14 +1078,6 @@ class StreamScreenViewModel @Inject constructor(
                 if (result is NetworkResult.Success) {
                     mergePolledAddonStreams(addon, result.data, installedAddonOrder)
                 }
-            }
-            val total = _uiState.value.allStreams.size
-            if (total > lastTotal) {
-                noGrowthPolls = 0
-                lastTotal = total
-            } else {
-                noGrowthPolls++
-                if (noGrowthPolls >= PROGRESSIVE_POLL_NO_GROWTH_STOP) break
             }
         }
         Log.d(TAG, "Progressive polling finished after $attempts poll(s), ${_uiState.value.allStreams.size} stream(s)")
