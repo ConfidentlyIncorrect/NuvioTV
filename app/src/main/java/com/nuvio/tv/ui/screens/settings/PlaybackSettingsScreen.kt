@@ -288,6 +288,7 @@ fun PlaybackSettingsContent(
                     coroutineScope.launch { viewModel.setRememberAudioDelayPerDevice(enabled) }
                 },
                 onSetTunnelingEnabled = { enabled -> coroutineScope.launch { viewModel.setTunnelingEnabled(enabled) } },
+                onSetForceOpticalPassthrough = { enabled -> coroutineScope.launch { viewModel.setForceOpticalPassthrough(enabled) } },
                 onShowDv7HandlingModeDialog = { openDialog { showDv7HandlingModeDialog = true } },
                 onSetDv5ToDv81Enabled = { enabled ->
                     coroutineScope.launch { viewModel.setDv5ToDv81Enabled(enabled) }
@@ -296,6 +297,9 @@ fun PlaybackSettingsContent(
                     coroutineScope.launch {
                         viewModel.setDv7ToDv81PreserveMappingEnabled(enabled)
                     }
+                },
+                onSetStripHdr10PlusSei = { enabled ->
+                    coroutineScope.launch { viewModel.setStripHdr10PlusSei(enabled) }
                 },
                 onSetBufferEngineEnabled = { enabled ->
                     coroutineScope.launch { viewModel.setBufferEngineEnabled(enabled) }

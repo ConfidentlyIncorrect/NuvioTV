@@ -114,7 +114,8 @@ fun ModernHomeContent(
     onSaveFocusState: (Int, Int, String?, Map<String, String>, Map<String, Int>, Int, Int) -> Unit,
     scrollToTopTrigger: Int = 0,
     onRequestLazyCatalogLoad: (String) -> Unit = {},
-    onRowItemFocusedCallback: (String, Int, Boolean) -> Unit = { _, _, _ -> }
+    onRowItemFocusedCallback: (String, Int, Boolean) -> Unit = { _, _, _ -> },
+    blockLeftOnFirstExpandedItem: Boolean = false
 ) {
     val onRowItemFocusedPassedDown = rememberUpdatedState(onRowItemFocusedCallback)
     val defaultBringIntoViewSpec = LocalBringIntoViewSpec.current
@@ -672,33 +673,36 @@ fun ModernHomeContent(
                 val url = collectionHeroVideoUrl?.takeIf { it.isNotBlank() }
                 if (focusKey != null && url != null) "$focusKey::${focusedHeroMediaNonce.intValue}::$url" else null
             }
+            val isScrollStoppedState = remember(verticalRowListState) {
+                derivedStateOf { !verticalRowListState.isScrollInProgress }
+            }
             val shouldPlayCatalogHeroTrailerState = remember(
+                isScrollStoppedState,
                 effectiveAutoplayEnabled,
                 trailerPlaybackTarget,
                 heroTrailerUrlsState,
-                verticalRowListState,
                 isSidebarExpanded,
                 isRapidHorizontalNav
             ) {
                 derivedStateOf {
-                    effectiveAutoplayEnabled &&
+                    isScrollStoppedState.value &&
+                        effectiveAutoplayEnabled &&
                         !isSidebarExpanded.value &&
                         !isRapidHorizontalNav.value &&
-                        !verticalRowListState.isScrollInProgress &&
                         trailerPlaybackTarget == FocusedPosterTrailerPlaybackTarget.HERO_MEDIA &&
                         !heroTrailerUrlsState.value.first.isNullOrBlank()
                 }
             }
             val shouldPlayCollectionHeroVideoState = remember(
+                isScrollStoppedState,
                 collectionHeroVideoUrl,
                 collectionHeroVideoPlaybackKey,
                 endedCollectionHeroVideoPlaybackKey,
-                verticalRowListState,
                 isSidebarExpanded
             ) {
                 derivedStateOf {
-                    !isSidebarExpanded.value &&
-                        !verticalRowListState.isScrollInProgress &&
+                    isScrollStoppedState.value &&
+                        !isSidebarExpanded.value &&
                         !collectionHeroVideoUrl.isNullOrBlank() &&
                         collectionHeroVideoPlaybackKey != null &&
                         endedCollectionHeroVideoPlaybackKey != collectionHeroVideoPlaybackKey
@@ -725,7 +729,7 @@ fun ModernHomeContent(
                 heroTrailerFirstFrameRendered = false
             }
 
-            val isTrailerPlayingFullscreenState = remember(fullScreenBackdrop, shouldPlayCatalogHeroTrailerState, heroTrailerFirstFrameRendered) {
+            val isTrailerPlayingFullscreenState = remember(fullScreenBackdrop, shouldPlayCatalogHeroTrailerState) {
                 derivedStateOf { fullScreenBackdrop && shouldPlayCatalogHeroTrailerState.value && heroTrailerFirstFrameRendered }
             }
             BackHandler(enabled = isTrailerPlayingFullscreenState.value) {
@@ -735,7 +739,6 @@ fun ModernHomeContent(
             val liveHeroSceneState = remember(
                 resolvedHeroState,
                 shouldPlayHeroTrailerState,
-                heroTrailerFirstFrameRendered,
                 heroMediaDataState,
                 heroMediaMutedState,
                 fullScreenBackdrop
@@ -1068,6 +1071,7 @@ fun ModernHomeContent(
                 focusedHeroMediaNonce = focusedHeroMediaNonce,
                 onFocusedHeroMediaNonceChange = onFocusedHeroMediaNonceChangeLambda,
                 onExpansionInteractionNonceChange = onExpansionInteractionNonceChangeLambda,
+                blockLeftOnFirstExpandedItem = blockLeftOnFirstExpandedItem,
                 isVerticalRowsScrollingState = isVerticalRowsScrollingState,
                 modifier = Modifier.align(Alignment.BottomStart)
             )

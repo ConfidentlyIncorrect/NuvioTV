@@ -1640,6 +1640,9 @@ internal fun PlayerRuntimeController.tryAutoSelectPreferredSubtitleFromAvailable
     if (targets.isEmpty()) {
         autoSubtitleSelected = true
         Log.d(PlayerRuntimeController.TAG, "AUTO_SUB stop: preferred=none")
+        if (isUsingMpvEngine()) {
+            mpvView?.disableSubtitles()
+        }
         return
     }
 
