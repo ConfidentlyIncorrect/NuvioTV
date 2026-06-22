@@ -26,6 +26,19 @@ It acts as a client-side playback interface that can integrate with the Stremio 
 
 Built with Kotlin and optimized for a TV-first viewing experience.
 
+## Ecosystem
+
+This `custom` fork is the on-screen client for a self-hosted stack built to run together:
+
+| Project | Role |
+| --- | --- |
+| **NuvioTV** *(this repo, `custom`)* | Android TV client. Cinemeta `#DUPE#` reconstruction, episode/season/series scope search, a live-ticking EPG panel, and player fixes (DV/MKV, CEA-608 captions, live-HLS recovery). |
+| **[AIOStreams](https://github.com/ConfidentlyIncorrect/AIOStreams/tree/custom)** | On-demand movie/series aggregator — torrents (Torrentio/Comet) + a self-hosted Prowlarr → NZBGeek usenet pipeline, all through TorBox. Its fork patch resolves `#DUPE#` server-side (the search-side complement to this app's display-side reconstruction). |
+| **[usa-tv-next](https://github.com/ConfidentlyIncorrect/usa-tv-next)** | Live US TV addon (~293 channels, merged multi-source EPG) that emits the `epgSchedule` field this app's guide panel renders. |
+| **[Comet (fork)](https://github.com/ConfidentlyIncorrect/comet/tree/tvdb-dupe-fix)** | Torrent-scraper addon (currently paused). |
+
+Install AIOStreams + usa-tv-next as addons in this client to get the full stack (on-demand + live TV). Both `#DUPE#` layers are intentionally symmetric: this app fixes the *displayed* title/art/episodes, AIOStreams fixes the *search* query. Supporting infra (Prowlarr + NZBGeek, TorBox, Caddy) runs on a single VPS.
+
 ## This fork
 
 This repository is a fork of [tapframe/NuvioTV](https://github.com/tapframe/NuvioTV), maintained
