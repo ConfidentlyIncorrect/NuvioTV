@@ -36,6 +36,7 @@ data class MetaPreview(
     val voteCount: Int? = null,
     // usa-tv-next: live guide window for the home hero (recompute NOW/NEXT on a clock). Null otherwise.
     val epgSchedule: List<EpgEntry>? = null,
+    val sourceAddonBaseUrl: String? = null
 ) {
     val apiType: String
         get() = type.toApiString(rawType)

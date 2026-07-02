@@ -50,7 +50,7 @@ class CatalogRepositoryImpl @Inject constructor(
 
         when (val result = safeApiCall(context) { api.getCatalog(url) }) {
             is NetworkResult.Success -> {
-                val items = repairDupeNames(result.data.metas.map { it.toDomain(type) }.distinctBy { it.id }, addonBaseUrl, type)
+                val items = repairDupeNames(result.data.metas.map { it.toDomain(type, addonBaseUrl) }.distinctBy { it.id }, addonBaseUrl, type)
                 Log.d(
                     TAG,
                     "Catalog fetch success addonId=$addonId type=$type catalogId=$catalogId items=${items.size}"

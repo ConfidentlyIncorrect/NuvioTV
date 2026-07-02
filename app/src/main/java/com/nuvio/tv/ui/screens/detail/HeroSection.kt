@@ -37,6 +37,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -122,7 +123,8 @@ fun HeroContentSection(
     playButtonFocusRequester: FocusRequester? = null,
     restorePlayFocusToken: Int = 0,
     onHeroActionFocused: () -> Unit = {},
-    onPlayFocusRestored: () -> Unit = {}
+    onPlayFocusRestored: () -> Unit = {},
+    onShowFullDescription: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val isSeriesApi = remember(meta.apiType) {

@@ -6,7 +6,7 @@ import com.nuvio.tv.domain.model.EpgEntry
 import com.nuvio.tv.domain.model.MetaPreview
 import com.nuvio.tv.domain.model.PosterShape
 
-fun MetaPreviewDto.toDomain(catalogType: String): MetaPreview {
+fun MetaPreviewDto.toDomain(catalogType: String, sourceAddonBaseUrl: String? = null): MetaPreview {
     val resolvedType = type?.takeIf { it.isNotBlank() } ?: catalogType
     return MetaPreview(
         id = id,
@@ -35,6 +35,7 @@ fun MetaPreviewDto.toDomain(catalogType: String): MetaPreview {
         behaviorHints = mapBehaviorHints(behaviorHints),
         trailers = mapTrailers(trailers, trailerStreams),
         trailerYtIds = collectTrailerYtIds(trailers, trailerStreams),
-        epgSchedule = epgSchedule?.map { EpgEntry(s = it.s, e = it.e, t = it.t, d = it.d) }
+        epgSchedule = epgSchedule?.map { EpgEntry(s = it.s, e = it.e, t = it.t, d = it.d) },
+        sourceAddonBaseUrl = sourceAddonBaseUrl
     )
 }
