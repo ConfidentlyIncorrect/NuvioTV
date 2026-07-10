@@ -10,6 +10,7 @@ import com.nuvio.tv.domain.model.Collection
 import com.nuvio.tv.domain.model.CollectionFolder
 import com.nuvio.tv.domain.model.ContentType
 import com.nuvio.tv.domain.model.PosterShape
+import com.nuvio.tv.domain.model.stableKey
 import com.nuvio.tv.ui.util.localizeEpisodeTitle
 import com.nuvio.tv.ui.util.localizedContentType
 import com.nuvio.tv.ui.util.computeAirDateBadgeText
@@ -570,7 +571,7 @@ internal fun continueWatchingItemKey(item: ContinueWatchingItem): String {
 }
 
 internal fun catalogRowKey(row: CatalogRow): String {
-    return "${row.addonId}_${row.apiType}_${row.catalogId}"
+    return row.stableKey()
 }
 
 internal fun catalogRowTitle(
@@ -590,7 +591,7 @@ internal fun catalogRowTitle(
 }
 
 internal fun CatalogRow.key(): String {
-    return "${addonId}_${apiType}_${catalogId}"
+    return stableKey()
 }
 
 internal fun isSeriesType(type: String?): Boolean {
