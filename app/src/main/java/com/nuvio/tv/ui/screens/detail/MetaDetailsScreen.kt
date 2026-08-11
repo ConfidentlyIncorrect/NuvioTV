@@ -1811,7 +1811,7 @@ private fun MetaDetailsContent(
             }
             if (showEpisodesRow) {
                 item(key = "scope_search", contentType = "scope_search") {
-                    Box(modifier = Modifier.bringIntoViewResponder(noVerticalScrollResponder)) {
+                    Box(modifier = Modifier.bringIntoViewResponder(heroNoScrollResponder)) {
                         ScopeSearchRow(
                             onSearchSeason = {
                                 episodesForSeason.firstOrNull()?.id?.let {
