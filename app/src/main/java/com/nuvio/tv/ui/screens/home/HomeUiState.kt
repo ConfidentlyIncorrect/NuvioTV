@@ -1,8 +1,10 @@
 package com.nuvio.tv.ui.screens.home
 
 import androidx.compose.runtime.Immutable
+import com.nuvio.tv.core.tracking.TrackingMembershipRemovalConfirmation
 import com.nuvio.tv.data.local.StartupAuthNotice
 import com.nuvio.tv.domain.model.CatalogRow
+import com.nuvio.tv.domain.model.ContinueWatchingCardStyle
 import com.nuvio.tv.domain.model.Collection
 import com.nuvio.tv.domain.model.FocusedPosterTrailerPlaybackTarget
 import com.nuvio.tv.domain.model.HomeLayout
@@ -15,6 +17,7 @@ import com.nuvio.tv.domain.model.WatchProgress
 data class HomeUiState(
     val catalogRows: List<CatalogRow> = emptyList(),
     val continueWatchingItems: List<ContinueWatchingItem> = emptyList(),
+    val upcomingItems: List<ContinueWatchingItem> = emptyList(),
     val isLoading: Boolean = true,
     val layoutPreferencesReady: Boolean = false,
     val error: String? = null,
@@ -48,14 +51,17 @@ data class HomeUiState(
     val movieWatchedPending: Set<String> = emptySet(),
     val showPosterListPicker: Boolean = false,
     val posterListPickerTitle: String? = null,
+    val posterListPickerContentType: String? = null,
     val posterListPickerMembership: Map<String, Boolean> = emptyMap(),
     val posterListPickerPending: Boolean = false,
     val posterListPickerError: String? = null,
+    val posterListPickerRemovalConfirmations: List<TrackingMembershipRemovalConfirmation> = emptyList(),
     val gridItems: List<GridItem> = emptyList(),
     val hideUnreleasedContent: Boolean = false,
     val showFullReleaseDate: Boolean = true,
     val blurUnwatchedEpisodes: Boolean = false,
     val useEpisodeThumbnailsInCw: Boolean = true,
+    val continueWatchingCardStyle: ContinueWatchingCardStyle = ContinueWatchingCardStyle.CARD,
     val heroEnrichmentEnabled: Boolean = false,
     val startupAuthNotice: StartupAuthNotice? = null,
     val homeRows: List<HomeRow> = emptyList()
@@ -124,6 +130,7 @@ sealed class HomeRow {
     @Immutable
     data class PlaceholderCatalog(
         val catalogKey: String,
+        val stableCatalogKey: String,
         val addonId: String,
         val addonName: String,
         val addonBaseUrl: String,
@@ -157,6 +164,7 @@ sealed class GridItem {
     data class SeeAll(
         val catalogId: String,
         val addonId: String,
+        val addonBaseUrl: String,
         val type: String
     ) : GridItem()
     @Immutable

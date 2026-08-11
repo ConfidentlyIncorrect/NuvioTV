@@ -22,12 +22,15 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -51,9 +54,13 @@ import androidx.compose.ui.Alignment
 import com.nuvio.tv.ui.components.CatalogRowSection
 import com.nuvio.tv.ui.components.CollectionRowSection
 import com.nuvio.tv.ui.components.ContinueWatchingSection
+import com.nuvio.tv.domain.model.ContinueWatchingCardStyle
 import com.nuvio.tv.ui.components.HeroCarousel
 import com.nuvio.tv.ui.components.LoadingIndicator
 import com.nuvio.tv.ui.components.PosterCardStyle
+import androidx.compose.ui.res.stringResource
+import androidx.tv.material3.MaterialTheme
+import com.nuvio.tv.R
 
 private class FocusSnapshot(
     var rowIndex: Int,
@@ -118,11 +125,25 @@ fun ClassicHomeContent(
             height = posterCardStyle.height * CLASSIC_SECONDARY_ROW_POSTER_SCALE
         )
     }
-    val classicContinueWatchingCardWidth = remember(classicSecondaryPosterCardStyle) {
-        classicSecondaryPosterCardStyle.width * (16f / 9f)
+    val classicContinueWatchingCardWidth = remember(classicCatalogPosterCardStyle, classicSecondaryPosterCardStyle, uiState.continueWatchingCardStyle) {
+        when (uiState.continueWatchingCardStyle) {
+            ContinueWatchingCardStyle.POSTER -> classicCatalogPosterCardStyle.width
+            ContinueWatchingCardStyle.WIDE -> classicSecondaryPosterCardStyle.width * 2.5f
+            ContinueWatchingCardStyle.CARD -> classicSecondaryPosterCardStyle.width * (16f / 9f)
+        }
     }
-    val classicContinueWatchingImageHeight = remember(classicSecondaryPosterCardStyle) {
-        classicSecondaryPosterCardStyle.width
+    val classicContinueWatchingImageHeight = remember(classicCatalogPosterCardStyle, classicSecondaryPosterCardStyle, uiState.continueWatchingCardStyle) {
+        when (uiState.continueWatchingCardStyle) {
+            ContinueWatchingCardStyle.POSTER -> classicCatalogPosterCardStyle.height
+            ContinueWatchingCardStyle.WIDE -> classicSecondaryPosterCardStyle.width * 2.5f * 0.4f
+            ContinueWatchingCardStyle.CARD -> classicSecondaryPosterCardStyle.width
+        }
+    }
+    // Match catalog poster label style so CW poster titles look the same as catalog ones.
+    val classicPosterTitleStyle = if (uiState.continueWatchingCardStyle == ContinueWatchingCardStyle.POSTER) {
+        MaterialTheme.typography.titleMedium
+    } else {
+        null
     }
 
     // Nested prefetch: when LazyColumn prefetches a row ahead of scrolling,
@@ -130,6 +151,7 @@ fun ClassicHomeContent(
     // This spreads the composition work and prevents frame spikes when a new row scrolls in.
     val nestedPrefetchStrategy = remember { LazyListPrefetchStrategy(nestedPrefetchItemCount = 2) }
 
+    val scope = rememberCoroutineScope()
     val columnListState = rememberLazyListState(
         initialFirstVisibleItemIndex = focusState.verticalScrollIndex,
         initialFirstVisibleItemScrollOffset = focusState.verticalScrollOffset,
@@ -171,6 +193,10 @@ fun ClassicHomeContent(
     val rowFocusRequesters = remember { mutableMapOf<String, FocusRequester>() }
     val rowEntryFocusRequesters = remember { mutableMapOf<String, FocusRequester>() }
     val rowFocusedItemIndex = remember { mutableMapOf<String, Int>() }
+    val upcomingSectionFocusRequester = remember { FocusRequester() }
+    val cwItemFocusRequesters = remember { mutableMapOf<Int, FocusRequester>() }
+    val upcomingItemFocusRequesters = remember { mutableMapOf<Int, FocusRequester>() }
+    val lastFocusedUpcomingIndex = remember { mutableIntStateOf(-1) }
 
     var restoringFocus by remember { mutableStateOf(focusState.hasSavedFocus) }
     val heroFocusRequester = remember { FocusRequester() }
@@ -191,7 +217,7 @@ fun ClassicHomeContent(
             when (row) {
                 is HomeRow.Catalog -> row.row.stableKey()
                 is HomeRow.CollectionRow -> "collection_${row.collection.id}"
-                is HomeRow.PlaceholderCatalog -> row.catalogKey
+                is HomeRow.PlaceholderCatalog -> row.stableCatalogKey
             }
         }
     }
@@ -396,14 +422,26 @@ fun ClassicHomeContent(
                         k == null -> null
                         k == "hero_carousel" -> heroFocusRequester
                         rowEntryFocusRequesters.containsKey(k) -> rowEntryFocusRequesters[k]
-                        else -> null
+                        else -> {
+                            val baseKey = k.substringBeforeLast('_')
+                            rowEntryFocusRequesters[baseKey]
+                        }
                     }
                     val requester = if (target == null) null
                     else requesterForKey(target.key as? String)
                         ?: visibleItems.firstNotNullOfOrNull { requesterForKey(it.key as? String) }
 
-                    runCatching { requester?.requestFocus() }
-                    null // Classic uses imperative requestFocus for now
+                    requester?.let { req ->
+                        scope.launch {
+                            repeat(6) {
+                                val ok = runCatching { req.requestFocus(); true }
+                                    .getOrDefault(false)
+                                if (ok) return@launch
+                                withFrameNanos { }
+                            }
+                        }
+                    }
+                    null // Classic uses imperative requestFocus
                 },
             ),
         contentPadding = PaddingValues(top = if (heroVisible) NuvioTheme.spacing.none else NuvioTheme.spacing.xl, bottom = NuvioTheme.spacing.xl),
@@ -437,10 +475,12 @@ fun ClassicHomeContent(
                     when (row) {
                         is HomeRow.Catalog -> row.row.stableKey()
                         is HomeRow.CollectionRow -> "collection_${row.collection.id}"
-                        is HomeRow.PlaceholderCatalog -> row.catalogKey
+                        is HomeRow.PlaceholderCatalog -> row.stableCatalogKey
                     }
                 }
-                val cwDownRequester = firstRowKey?.let { rowEntryFocusRequesters.getOrPut(it) { FocusRequester() } }
+                val firstAddonRowRequester = firstRowKey?.let { rowEntryFocusRequesters.getOrPut(it) { FocusRequester() } }
+                // When upcoming section is visible, CW should navigate down to it; otherwise go to first addon row
+                val cwDownRequester = if (uiState.upcomingItems.isNotEmpty()) upcomingSectionFocusRequester else firstAddonRowRequester
                 ContinueWatchingSection(
                     items = uiState.continueWatchingItems,
                     onItemClick = { item ->
@@ -494,8 +534,75 @@ fun ClassicHomeContent(
                     blurUnwatchedEpisodes = uiState.blurUnwatchedEpisodes,
                     useEpisodeThumbnails = uiState.useEpisodeThumbnailsInCw,
                     downFocusRequester = cwDownRequester,
+                    focusRequesters = cwItemFocusRequesters,
                     cardWidth = classicContinueWatchingCardWidth,
-                    imageHeight = classicContinueWatchingImageHeight
+                    imageHeight = classicContinueWatchingImageHeight,
+                    cardStyle = uiState.continueWatchingCardStyle,
+                    cornerRadius = posterCardStyle.cornerRadius,
+                    posterTitleOverride = classicPosterTitleStyle
+                )
+            }
+        }
+
+        if (uiState.upcomingItems.isNotEmpty()) {
+            item(key = "upcoming_section", contentType = "upcoming_section") {
+                val firstRowKey = visibleHomeRows.firstOrNull()?.let { row ->
+                    when (row) {
+                        is HomeRow.Catalog -> row.row.stableKey()
+                        is HomeRow.CollectionRow -> "collection_${row.collection.id}"
+                        is HomeRow.PlaceholderCatalog -> row.stableCatalogKey
+                    }
+                }
+                val upcomingDownRequester = firstRowKey?.let { rowEntryFocusRequesters.getOrPut(it) { FocusRequester() } }
+                ContinueWatchingSection(
+                    items = uiState.upcomingItems,
+                    title = stringResource(R.string.upcoming_section_title),
+                    onItemClick = { item ->
+                        onContinueWatchingClick(item)
+                    },
+                    onStartFromBeginning = onContinueWatchingStartFromBeginning,
+                    showManualPlayOption = showContinueWatchingManualPlayOption,
+                    onPlayManually = onContinueWatchingPlayManually,
+                    onDetailsClick = { item ->
+                        onNavigateToDetail(
+                            when (item) {
+                                is ContinueWatchingItem.InProgress -> item.progress.contentId
+                                is ContinueWatchingItem.NextUp -> item.info.contentId
+                            },
+                            when (item) {
+                                is ContinueWatchingItem.InProgress -> item.progress.contentType
+                                is ContinueWatchingItem.NextUp -> item.info.contentType
+                            },
+                            ""
+                        )
+                    },
+                    onRemoveItem = { item ->
+                        val contentId = when (item) {
+                            is ContinueWatchingItem.InProgress -> item.progress.contentId
+                            is ContinueWatchingItem.NextUp -> item.info.contentId
+                        }
+                        val season = when (item) {
+                            is ContinueWatchingItem.InProgress -> item.progress.season
+                            is ContinueWatchingItem.NextUp -> item.info.seedSeason
+                        }
+                        val episode = when (item) {
+                            is ContinueWatchingItem.InProgress -> item.progress.episode
+                            is ContinueWatchingItem.NextUp -> item.info.seedEpisode
+                        }
+                        val isNextUp = item is ContinueWatchingItem.NextUp
+                        onRemoveContinueWatching(contentId, season, episode, isNextUp)
+                    },
+                    blurUnwatchedEpisodes = uiState.blurUnwatchedEpisodes,
+                    useEpisodeThumbnails = uiState.useEpisodeThumbnailsInCw,
+                    entryFocusRequester = upcomingSectionFocusRequester,
+                    downFocusRequester = upcomingDownRequester,
+                    focusRequesters = upcomingItemFocusRequesters,
+                    lastFocusedIndexState = lastFocusedUpcomingIndex,
+                    cardWidth = classicContinueWatchingCardWidth,
+                    imageHeight = classicContinueWatchingImageHeight,
+                    cardStyle = uiState.continueWatchingCardStyle,
+                    cornerRadius = posterCardStyle.cornerRadius,
+                    posterTitleOverride = classicPosterTitleStyle
                 )
             }
         }
@@ -509,7 +616,7 @@ fun ClassicHomeContent(
                         "${r.stableKey()}_$index"
                     }
                     is HomeRow.CollectionRow -> "collection_${item.collection.id}"
-                    is HomeRow.PlaceholderCatalog -> "${item.catalogKey}_$index"
+                    is HomeRow.PlaceholderCatalog -> "${item.stableCatalogKey}_$index"
                 }
             },
             contentType = { _, item ->

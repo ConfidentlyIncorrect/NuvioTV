@@ -1,6 +1,8 @@
 package com.nuvio.tv.core.di
 
 import com.nuvio.tv.BuildConfig
+import com.nuvio.tv.core.auth.TransientAuthRefreshException
+import com.nuvio.tv.core.auth.shouldRetryAuthRefreshResponse
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -12,9 +14,12 @@ import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.createSupabaseClient
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.postgrest
-import io.github.jan.supabase.realtime.Realtime
+import io.ktor.client.plugins.HttpResponseValidator
 import io.ktor.client.plugins.defaultRequest
+import io.ktor.client.statement.request
 import io.ktor.http.HttpHeaders
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
 import javax.inject.Singleton
 
 @Module
@@ -24,15 +29,31 @@ object SupabaseModule {
     @Provides
     @Singleton
     @OptIn(SupabaseInternal::class)
-    fun provideSupabaseClient(): SupabaseClient {
+    fun provideSupabaseClient(): SupabaseClient = runBlocking(Dispatchers.IO) {
         val userAgent = "NuvioTV/${BuildConfig.VERSION_NAME.ifBlank { "dev" }}"
-        return createSupabaseClient(
+        createSupabaseClient(
             supabaseUrl = BuildConfig.SUPABASE_URL,
             supabaseKey = BuildConfig.SUPABASE_ANON_KEY
         ) {
             httpConfig {
                 defaultRequest {
                     headers.append(HttpHeaders.UserAgent, userAgent)
+                }
+                HttpResponseValidator {
+                    validateResponse { response ->
+                        val requestUrl = response.request.url
+                        if (
+                            shouldRetryAuthRefreshResponse(
+                                statusCode = response.status.value,
+                                path = requestUrl.encodedPath,
+                                grantType = requestUrl.parameters.get("grant_type"),
+                                server = response.headers[HttpHeaders.Server],
+                                cloudflareRay = response.headers["CF-Ray"]
+                            )
+                        ) {
+                            throw TransientAuthRefreshException(response.status.value)
+                        }
+                    }
                 }
             }
             install(Auth) {
@@ -42,9 +63,9 @@ object SupabaseModule {
                 enableLifecycleCallbacks = false
             }
             install(Postgrest)
-            install(Realtime)
         }
     }
+
 
     @Provides
     @Singleton

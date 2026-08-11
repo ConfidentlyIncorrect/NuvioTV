@@ -29,6 +29,7 @@ import java.net.SocketTimeoutException
 import java.net.URLDecoder
 import java.security.SecureRandom
 import java.security.cert.X509Certificate
+import java.util.Base64
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -60,31 +61,10 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
 
     // OkHttp client used only by the opt-in parallel-connections path.
     private val playbackHttpClient by lazy {
-        val trustAllManager = object : X509TrustManager {
-            override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) = Unit
-            override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) = Unit
-            override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
-        }
-        val sslContext = SSLContext.getInstance("TLS").apply {
-            init(null, arrayOf<TrustManager>(trustAllManager), SecureRandom())
-        }
-        val dispatcher = Dispatcher().apply {
-            maxRequests = 64
-            maxRequestsPerHost = 32
-        }
-        val builder = OkHttpClient.Builder()
+        PlayerPlaybackNetworking.playbackHttpClient.newBuilder()
             .cookieJar(NuvioApplication.extensionCookieJar)
-            .dns(IPv4FirstDns())
-            .dispatcher(dispatcher)
-            .sslSocketFactory(sslContext.socketFactory, trustAllManager)
-            .hostnameVerifier { _, _ -> true }
-            .connectTimeout(10, TimeUnit.SECONDS)
-            .readTimeout(20, TimeUnit.SECONDS)
-            .writeTimeout(45, TimeUnit.SECONDS)
-            .retryOnConnectionFailure(true)
-            .followRedirects(true)
-            .followSslRedirects(true)
-        NuvioExoPlayerPerformanceHelper.applyNetworkOptimizations(builder).build()
+            .let { NuvioExoPlayerPerformanceHelper.applyNetworkOptimizations(it) }
+            .build()
     }
 
     fun configureSubtitleParsing(
@@ -308,6 +288,11 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
             }
         }
 
+        data class NormalizedPlaybackRequest(
+            val url: String,
+            val headers: Map<String, String>
+        )
+
         @Volatile private var sharedSimpleCache: SimpleCache? = null
         @Volatile private var configuredVodCacheMaxBytes: Long = -1L
         @Volatile private var isVodCacheDisabled: Boolean = false
@@ -325,6 +310,18 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
                 sanitized[key] = value
             }
             return sanitized
+        }
+
+        fun normalizePlaybackRequest(
+            url: String,
+            headers: Map<String, String>?
+        ): NormalizedPlaybackRequest {
+            val sanitizedHeaders = sanitizeHeaders(headers)
+            val (cleanUrl, mergedHeaders) = extractUserInfoAuth(url, sanitizedHeaders)
+            return NormalizedPlaybackRequest(
+                url = cleanUrl,
+                headers = sanitizeHeaders(mergedHeaders)
+            )
         }
 
         fun parseHeaders(headers: String?): Map<String, String> {
@@ -605,16 +602,16 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
         }
 
         private val DELIMITED_M3U8_PATTERN = Regex("(^|[=/_.?&-])(m3u8|m3u)($|[=/_.?&-])")
-        private val PLAYLIST_HLS_PATTERN = Regex("/(playlist|hls|manifest|master)/(?!stream$|list$|info$|details$)[a-zA-Z0-9_-]+$")
+        private val PLAYLIST_HLS_PATTERN = Regex("/(playlist|hls|manifest|master|vs)/(?!stream$|list$|info$|details$)[a-zA-Z0-9_/-]+$")
         private val DELIMITED_MPD_PATTERN = Regex("(^|[=/_.?&-])mpd($|[=/_.?&-])")
         private val DELIMITED_SS_PATTERN = Regex("(^|[=/_.?&-])(ism|isml)($|[=/_.?&-])")
 
         /**
-         * Extracts `user:password` from a URL's userinfo component and converts it
+         * Extracts `user:pass` from a URL's userinfo component and converts it
          * to a Basic Auth header. Returns the cleaned URL (without userinfo) and
          * merged headers. If the URL has no userinfo, returns the original URL and headers unchanged.
          *
-         * Example: `https://user:pass@host/path` → URL `https://host/path` + header `Authorization: Basic dXNlcjpwYXNz`
+         * The returned URL has no userinfo, and the returned headers carry Basic auth.
          */
         fun extractUserInfoAuth(
             url: String,
@@ -622,29 +619,46 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
         ): Pair<String, Map<String, String>> {
             if (url.isBlank()) return url to headers
             val uri = try { java.net.URI(url) } catch (_: Exception) { return url to headers }
-            val userInfo = uri.userInfo ?: return url to headers
+            val rawUserInfo = uri.rawAuthority
+                ?.substringBeforeLast('@', missingDelimiterValue = "")
+                ?.takeIf { it.isNotBlank() }
+            val userInfo = uri.userInfo ?: rawUserInfo?.let(::decodeRawUserInfo) ?: return url to headers
             if (userInfo.isBlank()) return url to headers
-            // Already has an Authorization header — don't override
-            if (headers.any { it.key.equals("Authorization", ignoreCase = true) }) {
-                return url to headers
-            }
-            val encoded = android.util.Base64.encodeToString(
-                userInfo.toByteArray(Charsets.UTF_8),
-                android.util.Base64.NO_WRAP
-            )
-            val cleanUri = java.net.URI(
-                uri.scheme,
-                null, // no userinfo
-                uri.host,
-                uri.port,
-                uri.path,
-                uri.query,
-                uri.fragment
-            )
+            val cleanUrl = stripRawUserInfo(uri) ?: return url to headers
             val mergedHeaders = LinkedHashMap(headers)
-            mergedHeaders["Authorization"] = "Basic $encoded"
-            return cleanUri.toString() to mergedHeaders
+            if (headers.none { it.key.equals("Authorization", ignoreCase = true) }) {
+                val encoded = Base64.getEncoder().encodeToString(userInfo.toByteArray(Charsets.UTF_8))
+                mergedHeaders["Authorization"] = "Basic $encoded"
+            }
+            return cleanUrl to mergedHeaders
         }
+
+        private fun stripRawUserInfo(uri: java.net.URI): String? {
+            val scheme = uri.scheme?.takeIf { it.isNotBlank() } ?: return null
+            val rawAuthority = uri.rawAuthority?.takeIf { it.isNotBlank() } ?: return null
+            val cleanAuthority = rawAuthority.substringAfterLast('@', missingDelimiterValue = rawAuthority)
+                .takeIf { it != rawAuthority && it.isNotBlank() }
+                ?: return null
+            return buildString {
+                append(scheme)
+                append("://")
+                append(cleanAuthority)
+                append(uri.rawPath.orEmpty())
+                uri.rawQuery?.let {
+                    append('?')
+                    append(it)
+                }
+                uri.rawFragment?.let {
+                    append('#')
+                    append(it)
+                }
+            }
+        }
+
+        private fun decodeRawUserInfo(value: String): String? =
+            runCatching {
+                URLDecoder.decode(value.replace("+", "%2B"), Charsets.UTF_8.name())
+            }.getOrNull()
     }
 }
 

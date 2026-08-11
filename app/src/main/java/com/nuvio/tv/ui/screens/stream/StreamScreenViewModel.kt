@@ -17,6 +17,12 @@ import com.nuvio.tv.core.torrent.TorrentService
 import com.nuvio.tv.core.torrent.TorrentState
 import com.nuvio.tv.core.player.StreamAutoPlayPolicy
 import com.nuvio.tv.core.player.StreamAutoPlaySelector
+import com.nuvio.tv.core.tracking.TrackingMediaKind
+import com.nuvio.tv.core.tracking.TrackingMediaReference
+import com.nuvio.tv.core.tracking.TrackingScrobbleAction
+import com.nuvio.tv.core.tracking.TrackingScrobbleCoordinator
+import com.nuvio.tv.core.tracking.TrackingScrobbleEvent
+import com.nuvio.tv.core.tracking.buildTrackingMediaReference
 import com.nuvio.tv.core.streams.StreamBadgePresentation
 import com.nuvio.tv.data.local.PlayerPreference
 import com.nuvio.tv.data.local.PlayerSettings
@@ -28,6 +34,7 @@ import com.nuvio.tv.data.local.BingeGroupCacheDataStore
 import com.nuvio.tv.domain.model.AddonStreams
 import com.nuvio.tv.domain.model.Meta
 import com.nuvio.tv.domain.model.Stream
+import com.nuvio.tv.domain.model.Video
 import com.nuvio.tv.domain.model.WatchProgress
 import com.nuvio.tv.domain.model.StreamDebridCacheState
 import com.nuvio.tv.domain.model.enabledAddons
@@ -35,13 +42,6 @@ import com.nuvio.tv.domain.repository.AddonRepository
 import com.nuvio.tv.domain.repository.MetaRepository
 import com.nuvio.tv.domain.repository.StreamRepository
 import com.nuvio.tv.domain.repository.WatchProgressRepository
-import com.nuvio.tv.data.repository.TraktScrobbleService
-import com.nuvio.tv.data.repository.TraktScrobbleItem
-import com.nuvio.tv.data.repository.TraktEpisodeMappingService
-import com.nuvio.tv.data.repository.TraktAuthService
-import com.nuvio.tv.data.repository.parseContentIds
-import com.nuvio.tv.data.repository.extractYear
-import com.nuvio.tv.data.repository.toTraktIds
 import com.nuvio.tv.ui.components.SourceChipItem
 import com.nuvio.tv.ui.components.SourceChipStatus
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -90,9 +90,7 @@ class StreamScreenViewModel @Inject constructor(
     private val bingeGroupCacheDataStore: BingeGroupCacheDataStore,
     private val torrentSettings: TorrentSettings,
     private val watchProgressRepository: WatchProgressRepository,
-    private val traktScrobbleService: TraktScrobbleService,
-    private val traktEpisodeMappingService: TraktEpisodeMappingService,
-    private val traktAuthService: TraktAuthService,
+    private val trackingScrobbleCoordinator: TrackingScrobbleCoordinator,
     private val directDebridResolver: DirectDebridResolver,
     private val directDebridStreamPreparer: DirectDebridStreamPreparer,
     private val debridStreamPresentation: DebridStreamPresentation,
@@ -115,7 +113,6 @@ class StreamScreenViewModel @Inject constructor(
     private var resumeBaselineStreams: List<AddonStreams>? = null
     private var sourceChipErrorDismissJob: Job? = null
     private var pendingCacheSaveJob: Job? = null
-    private var pendingBingeGroupSaveJob: Job? = null
     private var streamBadgePresentationJob: Job? = null
     private var streamBadgePresentationRequestId = 0L
     private var badgedAddonNames: Set<String> = emptySet()
@@ -128,6 +125,7 @@ class StreamScreenViewModel @Inject constructor(
     // Seeded from the nav arg so the detail-screen "Search Season/Series" buttons open pre-scoped.
     private var searchScope: String =
         savedStateHandle.get<String>("scope")?.takeIf { it.isNotBlank() } ?: SEARCH_SCOPE_EPISODE
+    private var playbackMetaVideos: List<Video>? = null
 
     private val embeddedStreamGroupName: String by lazy {
         context.getString(R.string.stream_embedded_group)
@@ -248,6 +246,14 @@ class StreamScreenViewModel @Inject constructor(
     }
 
     init {
+        viewModelScope.launch {
+            _uiState
+                .map { state -> state.directAutoPlayMessage to state.directAutoPlayProgress }
+                .distinctUntilChanged()
+                .collectLatest { (message, progress) ->
+                    externalPlaybackTracker.updateAutoNextOverlayStatus(message, progress)
+                }
+        }
         if (manualSelection) {
             // Returning from a playback error: keep the user on stream selection.
             autoPlayHandledForSession = true
@@ -304,6 +310,7 @@ class StreamScreenViewModel @Inject constructor(
             is StreamScreenEvent.OnSearchScopeSelected -> setSearchScope(event.scope)
             StreamScreenEvent.OnBackPress -> { /* Handle in screen */ }
             StreamScreenEvent.OnResume -> {
+                hostInForeground.value = true
                 // If loading was cancelled (e.g. user went to player) and
                 // hasn't completed yet, resume it. The baseline snapshot
                 // captured at cancel time keeps existing results visible
@@ -790,7 +797,7 @@ class StreamScreenViewModel @Inject constructor(
                             directAutoPlayMessage = null
                         )
                     }
-                    externalPlaybackTracker.releaseAutoNextOverlay()
+                    externalPlaybackTracker.releaseAutoNextOverlay(forceRelease = true)
                 }
             }
 
@@ -849,7 +856,23 @@ class StreamScreenViewModel @Inject constructor(
             // results have already arrived.
             if (directFlowActive) {
                 delay(DIRECT_AUTOPLAY_HARD_TIMEOUT_MS)
-                if (directAutoPlayFlowEnabledForSession && !resolvedAutoPlayTarget) {
+                // A resolved target that never actually started playback (e.g. a dead
+                // Reuse Last Link) leaves the loader up, since every earlier teardown is
+                // gated on !resolvedAutoPlayTarget. Only stuck if still foregrounded: a
+                // healthy external launch backgrounds us and keeps the VM alive behind
+                // the player for the whole episode.
+                val hasResolvedOverlay = resolvedAutoPlayTarget &&
+                    (_uiState.value.showDirectAutoPlayOverlay || _uiState.value.externalPlayerOverlayVisible)
+                if (hasResolvedOverlay) {
+                    DirectAutoPlayWatchdogPolicy.awaitForeground(hostInForeground)
+                }
+                val phantomStuck = DirectAutoPlayWatchdogPolicy.shouldTearDownResolvedTarget(
+                    resolvedAutoPlayTarget = resolvedAutoPlayTarget,
+                    hostInForeground = hostInForeground.value,
+                    showDirectAutoPlayOverlay = _uiState.value.showDirectAutoPlayOverlay,
+                    externalPlayerOverlayVisible = _uiState.value.externalPlayerOverlayVisible
+                )
+                if ((directAutoPlayFlowEnabledForSession && !resolvedAutoPlayTarget) || phantomStuck) {
                     Log.w(TAG, "Direct autoplay hard timeout reached; falling back to manual selection")
                     lastSuccessData?.let {
                         if (!autoSelectTriggered) {
@@ -857,17 +880,19 @@ class StreamScreenViewModel @Inject constructor(
                             applySuccess(it, isAllLoaded = true)
                         }
                     }
-                    if (!resolvedAutoPlayTarget) {
+                    if (!resolvedAutoPlayTarget || phantomStuck) {
                         directAutoPlayFlowEnabledForSession = false
                         updateUiStateIfChanged {
                             it.copy(
                                 isLoading = false,
                                 isDirectAutoPlayFlow = false,
                                 showDirectAutoPlayOverlay = false,
+                                externalPlayerOverlayVisible = false,
+                                autoPlayPlaybackInfo = null,
                                 directAutoPlayMessage = null
                             )
                         }
-                        externalPlaybackTracker.releaseAutoNextOverlay()
+                        externalPlaybackTracker.releaseAutoNextOverlay(forceRelease = true)
                         streamLoadInner.cancel()
                         markRemainingSourceChipsAsError()
                     }
@@ -1193,8 +1218,6 @@ class StreamScreenViewModel @Inject constructor(
 
     private fun loadMissingMetaDetailsIfNeeded() {
         val requiresMetadataLookup = genres.isNullOrBlank() || year.isNullOrBlank() || runtime == null
-        if (!requiresMetadataLookup) return
-
         val metaId = contentId ?: videoId.substringBefore(":")
         if (metaId.isBlank() || contentType.isBlank()) return
 
@@ -1205,6 +1228,8 @@ class StreamScreenViewModel @Inject constructor(
             if (result !is NetworkResult.Success) return@launch
 
             val meta = result.data
+            playbackMetaVideos = meta.videos
+            if (!requiresMetadataLookup) return@launch
             val metaGenres = meta.genres.takeIf { it.isNotEmpty() }?.joinToString(" • ")
             val metaYear = meta.releaseInfo
                 ?.substringBefore("-")
@@ -1390,13 +1415,21 @@ class StreamScreenViewModel @Inject constructor(
 
     /** Release the MainActivity auto-next loader once this Stream screen has settled. Hides the
      *  overlay only; it must not abort the chain, or a fast settle would suppress the next advance. */
-    fun dismissExternalAutoNextOverlay() {
-        externalPlaybackTracker.releaseAutoNextOverlay()
+    fun dismissExternalAutoNextOverlay(forceRelease: Boolean = false) {
+        externalPlaybackTracker.releaseAutoNextOverlay(forceRelease = forceRelease)
     }
 
     /** Set to true when external player is launched, reset on stop. */
     private var externalPlayerLaunched = false
     private var externalPlayerLaunchTimeMs = 0L
+
+    // Foreground gate for the stuck-loader timeout; healthy external playback
+    // backgrounds us (ON_STOP). True at init since the screen starts visible.
+    private val hostInForeground = MutableStateFlow(true)
+
+    fun onHostStopped() {
+        hostInForeground.value = false
+    }
     private var externalOverlayHideJob: kotlinx.coroutines.Job? = null
 
     fun stopExternalPlayerTracking() {
@@ -1505,27 +1538,16 @@ class StreamScreenViewModel @Inject constructor(
                 )
             }
         }
-        // Persist binge group per-content for cross-episode reuse (independent of URL).
-        val bg = playbackInfo.bingeGroup
-        val cid = playbackInfo.contentId
-        if (bg != null && !cid.isNullOrBlank()) {
-            pendingBingeGroupSaveJob = viewModelScope.launch {
-                bingeGroupCacheDataStore.save(cid, bg)
-            }
-        }
-
         return playbackInfo
     }
 
     suspend fun awaitStreamLinkCacheSave() {
         pendingCacheSaveJob?.join()
-        pendingBingeGroupSaveJob?.join()
     }
 
     private suspend fun persistBingeGroupForPlayback(playbackInfo: StreamPlaybackInfo) {
-        val bg = playbackInfo.bingeGroup ?: return
         val cid = playbackInfo.contentId?.takeIf { it.isNotBlank() } ?: return
-        bingeGroupCacheDataStore.save(cid, bg)
+        bingeGroupCacheDataStore.replace(cid, playbackInfo.bingeGroup)
     }
 
     override fun onCleared() {
@@ -1574,14 +1596,16 @@ class StreamScreenViewModel @Inject constructor(
         context: android.content.Context
     ) {
         externalOverlayHideJob?.cancel()
+        // Preserve the current message; blanking it made the card's Crossfade flash
+        // empty before the subtitle/skip fetch set the next one.
         updateUiStateIfChanged {
             it.copy(
                 showDirectAutoPlayOverlay = true,
-                externalPlayerOverlayVisible = true,
-                directAutoPlayMessage = null
+                externalPlayerOverlayVisible = true
             )
         }
 
+        // Persist only the stream that actually launches. A missing group clears stale reuse state.
         persistBingeGroupForPlayback(playbackInfo)
 
         var playUrl = url
@@ -1659,6 +1683,7 @@ class StreamScreenViewModel @Inject constructor(
                 isTorrentStreamStarted = true
 
                 val client = okhttp3.OkHttpClient.Builder()
+                    .dns(com.nuvio.tv.core.network.IPv4FirstDns())
                     .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
                     .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
                     .build()
@@ -1708,6 +1733,7 @@ class StreamScreenViewModel @Inject constructor(
                         )
                     )
                 }
+                externalPlaybackTracker.releaseAutoNextOverlay(forceRelease = true)
                 return
             } finally {
                 call?.cancel()
@@ -1763,7 +1789,7 @@ class StreamScreenViewModel @Inject constructor(
         // protects against spurious ON_RESUME after the player intent is sent.
         externalPlayerLaunchTimeMs = System.currentTimeMillis()
 
-        externalPlaybackTracker.launchPlayer(
+        val launched = externalPlaybackTracker.launchPlayer(
             metadata = metadata,
             url = playUrl,
             title = metadata.buildPlayerTitle(),
@@ -1771,8 +1797,27 @@ class StreamScreenViewModel @Inject constructor(
             resumePositionMs = resumePositionMs,
             subtitles = subtitleInputs,
             autoLaunch = autoLaunch,
+            nextEpisodeSnapshot = playbackMetaVideos?.let { videos ->
+                com.nuvio.tv.core.player.resolveExternalNextEpisodeSnapshot(
+                    videos = videos,
+                    currentSeason = metadata.season,
+                    currentEpisode = metadata.episode
+                )
+            },
             context = context
         )
+        if (!launched) {
+            externalPlayerLaunched = false
+            externalPlayerLaunchTimeMs = 0L
+            updateUiStateIfChanged {
+                it.copy(
+                    showDirectAutoPlayOverlay = false,
+                    externalPlayerOverlayVisible = false,
+                    directAutoPlayMessage = null,
+                    directAutoPlayProgress = null
+                )
+            }
+        }
     }
 
     /**
@@ -1895,65 +1940,42 @@ class StreamScreenViewModel @Inject constructor(
                 "content=$contentId, video=$videoId")
             watchProgressRepository.saveProgress(progress)
 
-            // Send Trakt scrobble (start + stop) so the playback session is recorded.
-            // Only attempt if Trakt is authenticated to avoid unnecessary API calls.
-            if (traktAuthService.getCurrentAuthState().isAuthenticated &&
-                traktAuthService.hasRequiredCredentials()) {
-                val progressPercent = if (effectiveDuration > 0L) {
-                    (positionMs.toFloat() / effectiveDuration.toFloat() * 100f).coerceIn(0f, 100f)
-                } else {
-                    0f
-                }
-                if (progressPercent > 0f) {
-                    val scrobbleItem = buildScrobbleItem(playbackInfo)
-                    if (scrobbleItem != null) {
-                        Log.d(TAG, "Sending Trakt scrobble for external player: ${progressPercent}%")
-                        traktScrobbleService.scrobbleStart(scrobbleItem, progressPercent = 0f)
-                        traktScrobbleService.scrobbleStop(scrobbleItem, progressPercent = progressPercent)
-                    }
+            val progressPercent = if (effectiveDuration > 0L) {
+                (positionMs.toFloat() / effectiveDuration.toFloat() * 100f).coerceIn(0f, 100f)
+            } else {
+                0f
+            }
+            if (progressPercent > 0f) {
+                val scrobbleItem = buildScrobbleItem(playbackInfo)
+                if (scrobbleItem != null) {
+                    trackingScrobbleCoordinator.scrobble(
+                        TrackingScrobbleAction.START,
+                        TrackingScrobbleEvent(scrobbleItem, 0.0)
+                    )
+                    trackingScrobbleCoordinator.scrobble(
+                        TrackingScrobbleAction.STOP,
+                        TrackingScrobbleEvent(scrobbleItem, progressPercent.toDouble())
+                    )
                 }
             }
         }
     }
 
-    private suspend fun buildScrobbleItem(playbackInfo: StreamPlaybackInfo): TraktScrobbleItem? {
+    private fun buildScrobbleItem(playbackInfo: StreamPlaybackInfo): TrackingMediaReference? {
         val rawContentId = playbackInfo.contentId ?: return null
-        val parsedIds = parseContentIds(rawContentId)
-        val ids = toTraktIds(parsedIds)
-        if (ids.trakt == null && ids.imdb.isNullOrBlank() && ids.tmdb == null) return null
-
-        val parsedYear = extractYear(playbackInfo.year)
-        val normalizedType = playbackInfo.contentType?.lowercase()
-        val isEpisode = normalizedType in listOf("series", "tv") &&
-            playbackInfo.season != null && playbackInfo.episode != null
-
-        return if (isEpisode) {
-            // Use episode mapping to translate addon season/episode to Trakt numbering
-            // (handles anime, specials, different season structures)
-            val mapped = traktEpisodeMappingService.prefetchEpisodeMapping(
-                contentId = rawContentId,
-                contentType = playbackInfo.contentType,
-                videoId = playbackInfo.videoId,
-                season = playbackInfo.season,
-                episode = playbackInfo.episode
-            )
-            val effectiveSeason = mapped?.season ?: playbackInfo.season ?: return null
-            val effectiveEpisode = mapped?.episode ?: playbackInfo.episode ?: return null
-
-            TraktScrobbleItem.Episode(
-                showTitle = playbackInfo.contentName ?: playbackInfo.title,
-                showYear = parsedYear,
-                showIds = ids,
-                season = effectiveSeason,
-                number = effectiveEpisode,
-                episodeTitle = playbackInfo.episodeTitle
-            )
-        } else {
-            TraktScrobbleItem.Movie(
-                title = playbackInfo.contentName ?: playbackInfo.title,
-                year = parsedYear,
-                ids = ids
-            )
+        val reference = buildTrackingMediaReference(
+            contentType = playbackInfo.contentType ?: "movie",
+            parentMetaId = rawContentId,
+            videoId = playbackInfo.videoId,
+            title = playbackInfo.contentName ?: playbackInfo.title,
+            releaseInfo = playbackInfo.year,
+            seasonNumber = playbackInfo.season,
+            episodeNumber = playbackInfo.episode,
+            episodeTitle = playbackInfo.episodeTitle
+        )
+        return reference.takeIf { media ->
+            media.hasResolvableIdentity &&
+                (media.kind == TrackingMediaKind.MOVIE || media.episode != null)
         }
     }
 

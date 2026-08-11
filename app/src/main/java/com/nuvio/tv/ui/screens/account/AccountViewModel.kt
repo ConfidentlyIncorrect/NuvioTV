@@ -23,6 +23,7 @@ import com.nuvio.tv.core.sync.PluginSyncService
 import com.nuvio.tv.core.sync.WatchProgressSyncService
 import com.nuvio.tv.core.sync.WatchedItemsSyncService
 import com.nuvio.tv.core.sync.ProfileSettingsSyncService
+import com.nuvio.tv.core.sync.ProviderCredentialSyncService
 import com.nuvio.tv.data.local.LibraryPreferences
 import com.nuvio.tv.data.local.WatchedItemsPreferences
 import com.nuvio.tv.data.local.TraktAuthDataStore
@@ -68,6 +69,7 @@ class AccountViewModel @Inject constructor(
     private val librarySyncService: LibrarySyncService,
     private val watchedItemsSyncService: WatchedItemsSyncService,
     private val profileSettingsSyncService: ProfileSettingsSyncService,
+    private val providerCredentialSyncService: ProviderCredentialSyncService,
     private val pluginManager: PluginManager,
     private val addonRepository: AddonRepositoryImpl,
     private val watchProgressRepository: WatchProgressRepositoryImpl,
@@ -693,11 +695,12 @@ class AccountViewModel @Inject constructor(
     private suspend fun pushLocalDataToRemote() {
         val profileId = profileManager.activeProfileId.value
         profileSettingsSyncService.pushCurrentProfileToRemote()
+        providerCredentialSyncService.syncFromRemote(profileId)
         pluginSyncService.pushToRemote()
         addonSyncService.pushToRemote()
         watchProgressSyncService.pushToRemote(profileId)
-        librarySyncService.pushToRemote()
-        watchedItemsSyncService.pushToRemote()
+        librarySyncService.pushToRemote(profileId)
+        watchedItemsSyncService.pushToRemote(profileId)
     }
 
     private suspend fun pullRemoteData(): Result<Unit> {
@@ -706,6 +709,7 @@ class AccountViewModel @Inject constructor(
             // if the user switches profiles during this long-running operation.
             val profileId = profileManager.activeProfileId.value
             profileSettingsSyncService.pullCurrentProfileFromRemote()
+            providerCredentialSyncService.syncFromRemote(profileId).getOrElse { throw it }
             pluginManager.isSyncingFromRemote = true
             val remotePlugins = pluginSyncService.getRemoteRepoUrls().getOrElse { throw it }
             pluginManager.reconcileWithRemoteRepoUrls(
@@ -725,8 +729,8 @@ class AccountViewModel @Inject constructor(
 
             val isTraktConnected = traktAuthDataStore.isEffectivelyAuthenticated.first()
             val shouldUseSupabaseWatchProgressSync = watchProgressSyncService.shouldUseSupabaseWatchProgressSync()
-            watchProgressSyncService.restoreLastPushTimestamp()
-            watchedItemsSyncService.restoreLastPushTimestamp()
+            watchProgressSyncService.restoreLastPushTimestamp(profileId)
+            watchedItemsSyncService.restoreLastPushTimestamp(profileId)
             Log.d(
                 "AccountViewModel",
                 "pullRemoteData: isTraktConnected=$isTraktConnected shouldUseSupabaseWatchProgressSync=$shouldUseSupabaseWatchProgressSync"
@@ -743,16 +747,19 @@ class AccountViewModel @Inject constructor(
                 watchProgressRepository.isSyncingFromRemote = false
 
                 libraryRepository.isSyncingFromRemote = true
-                librarySyncService.pullFromRemote().fold(
-                    onSuccess = { remoteLibraryItems ->
-                        Log.d("AccountViewModel", "pullRemoteData: pulled ${remoteLibraryItems.size} library items")
-                        libraryPreferences.mergeRemoteItems(remoteLibraryItems)
-                        Log.d("AccountViewModel", "pullRemoteData: reconciled local library with ${remoteLibraryItems.size} remote items")
+                librarySyncService.syncFromRemote(profileId).fold(
+                    onSuccess = { result ->
+                        Log.d(
+                            "AccountViewModel",
+                            "pullRemoteData: library sync snapshot=${result.usedSnapshot} " +
+                                "upserts=${result.appliedUpserts} deletes=${result.appliedDeletes}"
+                        )
                     },
                     onFailure = { e ->
                         Log.e("AccountViewModel", "pullRemoteData: failed to pull library items", e)
                     }
                 )
+                libraryRepository.hasCompletedInitialPull = true
                 libraryRepository.isSyncingFromRemote = false
 
                 val watchedItemsResult = watchedItemsSyncService.syncDeltaFromRemote(profileId).getOrElse { throw it }
@@ -760,7 +767,7 @@ class AccountViewModel @Inject constructor(
                 Log.d("AccountViewModel", "pullRemoteData: watched items sync applied ${watchedItemsResult.upsertedItems} upserts and ${watchedItemsResult.deletedItems} deletes (snapshot=${watchedItemsResult.usedSnapshot})")
                 if (watchedItemsResult.preservedLocalItems) {
                     Log.d("AccountViewModel", "pullRemoteData: detected unsynced watched items, pushing")
-                    watchedItemsSyncService.pushToRemote()
+                    watchedItemsSyncService.pushToRemote(profileId)
                 }
             } else if (shouldUseSupabaseWatchProgressSync) {
                 watchProgressRepository.isSyncingFromRemote = true
@@ -774,7 +781,7 @@ class AccountViewModel @Inject constructor(
                 Log.d("AccountViewModel", "pullRemoteData: watched items sync applied ${watchedItemsResult.upsertedItems} upserts and ${watchedItemsResult.deletedItems} deletes in Trakt mode (snapshot=${watchedItemsResult.usedSnapshot})")
                 if (watchedItemsResult.preservedLocalItems) {
                     Log.d("AccountViewModel", "pullRemoteData: detected unsynced watched items in Trakt mode, pushing")
-                    watchedItemsSyncService.pushToRemote()
+                    watchedItemsSyncService.pushToRemote(profileId)
                 }
             }
             return Result.success(Unit)

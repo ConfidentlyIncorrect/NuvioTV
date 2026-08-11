@@ -50,6 +50,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -194,7 +195,9 @@ fun HeroContentSection(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .animateContentSize(animationSpec = tween(600))
+                .animateContentSize(
+                    animationSpec = tween(600)
+                )
                 .padding(start = NuvioTheme.spacing.xxxl, end = NuvioTheme.spacing.xxxl, bottom = NuvioTheme.spacing.lg),
             verticalArrangement = Arrangement.Bottom
         ) {
@@ -936,6 +939,7 @@ private fun MDBListRatingsRow(ratings: MDBListRatings) {
             Triple("imdb", com.nuvio.tv.R.raw.imdb_logo_2016, ratings.imdb),
             Triple("tmdb", com.nuvio.tv.R.raw.mdblist_tmdb, ratings.tmdb),
             Triple("letterboxd", com.nuvio.tv.R.raw.mdblist_letterboxd, ratings.letterboxd),
+            Triple("mal", com.nuvio.tv.R.raw.mdblist_mal, ratings.mal),
             Triple("tomatoes", com.nuvio.tv.R.raw.mdblist_tomatoes, ratings.tomatoes)
         ).filter { it.third != null }
     }

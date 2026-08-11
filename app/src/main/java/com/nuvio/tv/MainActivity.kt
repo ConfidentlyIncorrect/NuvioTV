@@ -1,6 +1,7 @@
 package com.nuvio.tv
 
 import android.content.Context
+import android.content.Intent
 import android.content.res.Configuration
 import android.os.Bundle
 import android.util.Log
@@ -117,11 +118,15 @@ import coil3.compose.rememberAsyncImagePainter
 import coil3.request.ImageRequest
 import com.nuvio.tv.R
 import com.nuvio.tv.core.auth.AuthManager
-import com.nuvio.tv.core.build.AppFeaturePolicy
+import com.nuvio.tv.core.auth.DeviceSessionRegistration
+import com.nuvio.tv.core.deeplink.DeepLinkHandler
+import com.nuvio.tv.core.deeplink.DeepLinkParser
 import com.nuvio.tv.core.profile.ProfileManager
 import com.nuvio.tv.core.sync.ProfileSettingsSyncService
 import com.nuvio.tv.core.sync.ProfileSyncService
 import com.nuvio.tv.core.sync.StartupSyncService
+import com.nuvio.tv.core.tracking.TrackingProgressRefreshCoordinator
+import com.nuvio.tv.core.tracking.TrackingRefreshIntent
 import com.nuvio.tv.data.local.AppOnboardingDataStore
 import com.nuvio.tv.data.local.AuthSessionNoticeDataStore
 import com.nuvio.tv.data.local.ExperienceModeDataStore
@@ -129,15 +134,17 @@ import com.nuvio.tv.data.local.LayoutPreferenceDataStore
 import com.nuvio.tv.data.local.StartupAuthNotice
 import com.nuvio.tv.data.local.ThemeDataStore
 import com.nuvio.tv.data.remote.supabase.AvatarRepository
-import com.nuvio.tv.data.repository.TraktProgressService
 import com.nuvio.tv.domain.model.AppFont
 import com.nuvio.tv.domain.model.AppTheme
 import com.nuvio.tv.domain.model.AuthState
+import com.nuvio.tv.domain.model.CardDepthStyle
 import com.nuvio.tv.domain.model.DiscoverLocation
 import com.nuvio.tv.domain.model.ExperienceMode
 import com.nuvio.tv.domain.model.SettingsUiStyle
+import com.nuvio.tv.domain.deeplink.AppDeepLink
 import com.nuvio.tv.domain.repository.AddonRepository
 import com.nuvio.tv.ui.components.NuvioScrollDefaults
+import com.nuvio.tv.ui.components.LocalCardDepthStyle
 import com.nuvio.tv.ui.components.ProfileAvatarCircle
 import com.nuvio.tv.ui.navigation.NuvioNavHost
 import com.nuvio.tv.ui.navigation.Screen
@@ -146,6 +153,7 @@ import com.nuvio.tv.ui.screens.account.AuthSignInScreen
 import com.nuvio.tv.ui.screens.addon.EssentialAddonSetupScreen
 import com.nuvio.tv.ui.screens.profile.ProfileSelectionScreen
 import com.nuvio.tv.ui.theme.NuvioComponents
+import com.nuvio.tv.ui.theme.NuvioLayout
 import com.nuvio.tv.ui.theme.NuvioMotion
 import com.nuvio.tv.ui.theme.NuvioPrimitives
 import com.nuvio.tv.ui.theme.NuvioRadii
@@ -155,13 +163,14 @@ import com.nuvio.tv.ui.util.LocalFastHorizontalNavigationEnabled
 import com.nuvio.tv.ui.util.LocalRecompositionHighlighterEnabled
 import com.nuvio.tv.ui.util.rememberDrawerItemFocusRequesters
 import com.nuvio.tv.updater.UpdateViewModel
-import com.nuvio.tv.updater.ui.UpdatePromptDialog
+import com.nuvio.tv.updater.ui.UpdateBannerHost
 import dagger.hilt.android.AndroidEntryPoint
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.haze
 import java.util.Locale
 import javax.inject.Inject
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -194,7 +203,8 @@ private data class MainUiPrefs(
     val smoothBringIntoViewEnabled: Boolean = true,
     val fastHorizontalNavigationEnabled: Boolean = false,
     val composeHighlighterEnabled: Boolean = false,
-    val settingsUiStyle: SettingsUiStyle = SettingsUiStyle.CLASSIC
+    val settingsUiStyle: SettingsUiStyle = SettingsUiStyle.CLASSIC,
+    val cardDepthStyle: CardDepthStyle = CardDepthStyle()
 )
 
 @AndroidEntryPoint
@@ -213,7 +223,7 @@ class MainActivity : ComponentActivity() {
     lateinit var addonRepository: AddonRepository
 
     @Inject
-    lateinit var traktProgressService: TraktProgressService
+    lateinit var trackingProgressRefreshCoordinator: TrackingProgressRefreshCoordinator
 
     @Inject
     lateinit var startupSyncService: StartupSyncService
@@ -234,6 +244,9 @@ class MainActivity : ComponentActivity() {
     lateinit var authManager: AuthManager
 
     @Inject
+    lateinit var deviceSessionRegistration: DeviceSessionRegistration
+
+    @Inject
     lateinit var authSessionNoticeDataStore: AuthSessionNoticeDataStore
 
     @Inject
@@ -247,6 +260,11 @@ class MainActivity : ComponentActivity() {
 
     @Inject
     lateinit var externalPlaybackTracker: com.nuvio.tv.core.player.ExternalPlaybackTracker
+
+    @Inject
+    lateinit var deepLinkHandler: DeepLinkHandler
+
+    private val pendingDeepLinkUrl = MutableStateFlow<String?>(null)
 
     private lateinit var jankStats: JankStats
 
@@ -315,6 +333,7 @@ class MainActivity : ComponentActivity() {
         // Extract extras set by the Continue Watching launcher channel preview programs.
         val launchContentId = intent?.getStringExtra("contentId")
         val launchContentType = intent?.getStringExtra("contentType")
+        captureDeepLinkIntent(intent)
 
         setContent {
             var hasSelectedProfileThisSession by rememberSaveable { mutableStateOf(false) }
@@ -441,7 +460,12 @@ class MainActivity : ComponentActivity() {
                         settingsUiStyle = settingsUiStyle,
                     )
                 }
-                combine(themeAndExperienceFlow, layoutAndFeaturesFlow, extraFeaturesFlow) { themePrefs, layoutPrefs, extraPrefs ->
+                combine(
+                    themeAndExperienceFlow,
+                    layoutAndFeaturesFlow,
+                    extraFeaturesFlow,
+                    layoutPreferenceDataStore.cardDepthStyle
+                ) { themePrefs, layoutPrefs, extraPrefs, cardDepthStyle ->
                     themePrefs.copy(
                         hasChosenLayout = layoutPrefs.hasChosenLayout,
                         sidebarCollapsed = layoutPrefs.sidebarCollapsed,
@@ -453,6 +477,7 @@ class MainActivity : ComponentActivity() {
                         fastHorizontalNavigationEnabled = extraPrefs.fastHorizontalNavigationEnabled,
                         composeHighlighterEnabled = extraPrefs.composeHighlighterEnabled,
                         settingsUiStyle = extraPrefs.settingsUiStyle,
+                        cardDepthStyle = cardDepthStyle
                     )
                 }
             }
@@ -479,6 +504,7 @@ class MainActivity : ComponentActivity() {
                     LocalBringIntoViewSpec provides bringIntoViewSpec,
                     LocalFastHorizontalNavigationEnabled provides mainUiPrefs.fastHorizontalNavigationEnabled,
                     LocalRecompositionHighlighterEnabled provides (BuildConfig.IS_DEBUG_BUILD && mainUiPrefs.composeHighlighterEnabled),
+                    LocalCardDepthStyle provides mainUiPrefs.cardDepthStyle,
                     com.nuvio.tv.core.player.LocalTrailerPlayerPool provides trailerPlayerPool
                 ) {
                 Surface(
@@ -599,6 +625,20 @@ class MainActivity : ComponentActivity() {
                         effectiveExperienceMode == ExperienceMode.ESSENTIAL &&
                             installedAddons.orEmpty().isEmpty() &&
                             !mainUiPrefs.addonSetupSkipped
+                    val pendingDeepLink by pendingDeepLinkUrl.collectAsState()
+
+                    LaunchedEffect(pendingDeepLink) {
+                        val url = pendingDeepLink ?: return@LaunchedEffect
+                        val deepLink = DeepLinkParser.parse(url)
+                        if (deepLink is AppDeepLink.AddonInstall && (needsEssentialAddonSetup || !layoutChosen)) {
+                            Toast.makeText(context, context.getString(R.string.addon_installing), Toast.LENGTH_SHORT).show()
+                            val installResult = deepLinkHandler.installAddon(deepLink.manifestUrl)
+                            if (pendingDeepLinkUrl.value == url) {
+                                pendingDeepLinkUrl.value = null
+                            }
+                            Toast.makeText(context, installResult.message, Toast.LENGTH_LONG).show()
+                        }
+                    }
 
                     if (needsEssentialAddonSetup) {
                         EssentialAddonSetupScreen(
@@ -636,14 +676,11 @@ class MainActivity : ComponentActivity() {
                     // the internal onPlaybackEnded path uses. Collected from the root composable
                     // so it survives StreamScreen's self-pop and a process kill (metadata is
                     // recovered from disk and the event replayed).
-                    var lastHandledAutoNextMs by rememberSaveable { mutableStateOf(0L) }
                     LaunchedEffect(navController) {
                         externalPlaybackTracker.autoPlayNext.collect { next ->
-                            // Skip a value replayed after a config change; act only on newer events.
-                            if (next.requestedAtMs <= lastHandledAutoNextMs) {
+                            if (!externalPlaybackTracker.claimAutoPlayNextNavigation(next)) {
                                 return@collect
                             }
-                            lastHandledAutoNextMs = next.requestedAtMs
                             Log.d(
                                 "MainActivity",
                                 "autoPlayNext received: S${next.nextSeason}E${next.nextEpisode} " +
@@ -682,6 +719,38 @@ class MainActivity : ComponentActivity() {
                                     itemType = launchContentType
                                 )
                             )
+                        }
+                    }
+
+                    LaunchedEffect(navController, layoutChosen, pendingDeepLink) {
+                        val url = pendingDeepLink ?: return@LaunchedEffect
+                        if (!layoutChosen) return@LaunchedEffect
+                        when (val deepLink = DeepLinkParser.parse(url)) {
+                            is AppDeepLink.Meta -> {
+                                pendingDeepLinkUrl.value = null
+                                navController.navigate(
+                                    Screen.Detail.createRoute(
+                                        itemId = deepLink.id,
+                                        itemType = deepLink.type
+                                    )
+                                ) {
+                                    launchSingleTop = true
+                                }
+                            }
+                            is AppDeepLink.AddonInstall -> {
+                                navController.navigate(Screen.AddonManager.route) {
+                                    launchSingleTop = true
+                                }
+                                Toast.makeText(context, context.getString(R.string.addon_installing), Toast.LENGTH_SHORT).show()
+                                val installResult = deepLinkHandler.installAddon(deepLink.manifestUrl)
+                                if (pendingDeepLinkUrl.value == url) {
+                                    pendingDeepLinkUrl.value = null
+                                }
+                                Toast.makeText(context, installResult.message, Toast.LENGTH_LONG).show()
+                            }
+                            null -> {
+                                pendingDeepLinkUrl.value = null
+                            }
                         }
                     }
 
@@ -775,87 +844,86 @@ class MainActivity : ComponentActivity() {
                     }?.route
                     val selectedDrawerItem = drawerItems.firstOrNull { it.route == selectedDrawerRoute } ?: drawerItems.first()
 
-                    if (modernSidebarEnabled) {
-                        ModernSidebarScaffold(
-                            navController = navController,
-                            startDestination = startDestination,
-                            currentRoute = currentRoute,
-                            rootRoutes = rootRoutes,
-                            drawerItems = drawerItems,
-                            selectedDrawerRoute = selectedDrawerRoute,
-                            selectedDrawerItem = selectedDrawerItem,
-                            sidebarCollapsed = sidebarCollapsed,
-                            modernSidebarBlurEnabled = modernSidebarBlurEnabled,
-                            hideBuiltInHeaders = hideBuiltInHeadersForFloatingPill,
-                            activeProfileName = activeProfile?.name ?: "",
-                            activeProfileColorHex = activeProfile?.avatarColorHex ?: "#1E88E5",
-                            activeProfileAvatarImageUrl = activeProfileAvatarImageUrl,
-                            showProfileSelector = profiles.size > 1,
-                            onSwitchProfile = { hasSelectedProfileThisSession = false },
-                            onNavigate = { optimisticRoute = it },
-                            onExitApp = {
-                                if (exitAppOnBack) {
-                                    fullyExit()
-                                } else {
-                                    finishAffinity()
-                                    finishAndRemoveTask()
-                                }
-                            }
-                        )
-                    } else {
-                        LegacySidebarScaffold(
-                            navController = navController,
-                            startDestination = startDestination,
-                            currentRoute = currentRoute,
-                            rootRoutes = rootRoutes,
-                            drawerItems = drawerItems,
-                            selectedDrawerRoute = selectedDrawerRoute,
-                            sidebarCollapsed = sidebarCollapsed,
-                            hideBuiltInHeaders = false,
-                            activeProfileName = activeProfile?.name ?: "",
-                            activeProfileColorHex = activeProfile?.avatarColorHex ?: "#1E88E5",
-                            activeProfileAvatarImageUrl = activeProfileAvatarImageUrl,
-                            showProfileSelector = profiles.size > 1,
-                            onSwitchProfile = { hasSelectedProfileThisSession = false },
-                            onNavigate = { optimisticRoute = it },
-                            onExitApp = {
-                                if (exitAppOnBack) {
-                                    fullyExit()
-                                } else {
-                                    finishAffinity()
-                                    finishAndRemoveTask()
-                                }
-                            }
-                        )
-                    }
+                    val updateViewModel: UpdateViewModel = hiltViewModel(this@MainActivity)
+                    val updateState by updateViewModel.uiState.collectAsState()
 
-                    if (AppFeaturePolicy.inAppUpdatesEnabled && !BuildConfig.IS_DEBUG_BUILD) {
-                        val updateViewModel: UpdateViewModel = hiltViewModel(this@MainActivity)
-                        val updateState by updateViewModel.uiState.collectAsState()
-                        UpdatePromptDialog(
-                            state = updateState,
-                            onDismiss = { updateViewModel.dismissDialog() },
-                            onDownload = { updateViewModel.downloadUpdate() },
-                            onInstall = { updateViewModel.installUpdateOrRequestPermission() },
-                            onIgnore = { updateViewModel.ignoreThisVersion() },
-                            onOpenUnknownSources = { updateViewModel.openUnknownSourcesSettings() }
-                        )
-                    }
+                    UpdateBannerHost(
+                        state = updateState,
+                        onDismissBanner = updateViewModel::dismissBanner,
+                        onDownload = updateViewModel::downloadUpdate,
+                        onInstall = updateViewModel::installUpdateOrRequestPermission,
+                        onDismissUnknownSources = updateViewModel::dismissUnknownSourcesDialog,
+                        onOpenUnknownSources = updateViewModel::openUnknownSourcesSettings,
+                        onFeedbackShown = updateViewModel::consumeFeedbackMessage
+                    ) {
+                        Box(modifier = Modifier.fillMaxSize()) {
+                            if (modernSidebarEnabled) {
+                                ModernSidebarScaffold(
+                                    navController = navController,
+                                    startDestination = startDestination,
+                                    currentRoute = currentRoute,
+                                    rootRoutes = rootRoutes,
+                                    drawerItems = drawerItems,
+                                    selectedDrawerRoute = selectedDrawerRoute,
+                                    selectedDrawerItem = selectedDrawerItem,
+                                    sidebarCollapsed = sidebarCollapsed,
+                                    modernSidebarBlurEnabled = modernSidebarBlurEnabled,
+                                    hideBuiltInHeaders = hideBuiltInHeadersForFloatingPill,
+                                    activeProfileName = activeProfile?.name ?: "",
+                                    activeProfileColorHex = activeProfile?.avatarColorHex ?: "#1E88E5",
+                                    activeProfileAvatarImageUrl = activeProfileAvatarImageUrl,
+                                    showProfileSelector = profiles.size > 1,
+                                    onSwitchProfile = { hasSelectedProfileThisSession = false },
+                                    onNavigate = { optimisticRoute = it },
+                                    onExitApp = {
+                                        if (exitAppOnBack) {
+                                            fullyExit()
+                                        } else {
+                                            finishAffinity()
+                                            finishAndRemoveTask()
+                                        }
+                                    }
+                                )
+                            } else {
+                                LegacySidebarScaffold(
+                                    navController = navController,
+                                    startDestination = startDestination,
+                                    currentRoute = currentRoute,
+                                    rootRoutes = rootRoutes,
+                                    drawerItems = drawerItems,
+                                    selectedDrawerRoute = selectedDrawerRoute,
+                                    sidebarCollapsed = sidebarCollapsed,
+                                    hideBuiltInHeaders = false,
+                                    activeProfileName = activeProfile?.name ?: "",
+                                    activeProfileColorHex = activeProfile?.avatarColorHex ?: "#1E88E5",
+                                    activeProfileAvatarImageUrl = activeProfileAvatarImageUrl,
+                                    showProfileSelector = profiles.size > 1,
+                                    onSwitchProfile = { hasSelectedProfileThisSession = false },
+                                    onNavigate = { optimisticRoute = it },
+                                    onExitApp = {
+                                        if (exitAppOnBack) {
+                                            fullyExit()
+                                        } else {
+                                            finishAffinity()
+                                            finishAndRemoveTask()
+                                        }
+                                    }
+                                )
+                            }
 
-                    // Loader shown while an external episode auto-advances. Drawn last (on top
-                    // of the NavHost) to hide the app cold-starting while the next source resolves.
-                    val autoNextOverlay by externalPlaybackTracker.autoNextOverlay.collectAsState()
-                    autoNextOverlay?.let { ov ->
-                        // Back is intercepted at the Activity level (dispatchKeyEvent) so it reliably
-                        // beats the destination screen's BackHandler.
-                        com.nuvio.tv.ui.screens.player.LoadingOverlay(
-                            visible = true,
-                            backdropUrl = ov.backdrop,
-                            logoUrl = ov.logo,
-                            title = ov.title,
-                            message = stringResource(R.string.external_auto_next_loading),
-                            modifier = Modifier.fillMaxSize()
-                        )
+                            val autoNextOverlay by externalPlaybackTracker.autoNextOverlay.collectAsState()
+                            autoNextOverlay?.let { ov ->
+                                com.nuvio.tv.ui.screens.player.LoadingOverlay(
+                                    visible = true,
+                                    backdropUrl = ov.backdrop,
+                                    logoUrl = ov.logo,
+                                    title = ov.title,
+                                    message = ov.message ?: stringResource(R.string.external_auto_next_loading),
+                                    progress = ov.progress,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -875,15 +943,30 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         if (::jankStats.isInitialized) jankStats.isTrackingEnabled = true
-        startupSyncService.requestForegroundSync()
         lifecycleScope.launch {
-            if (isFirstResumeAfterCreate) {
-                isFirstResumeAfterCreate = false
-                traktProgressService.invalidateAndRefresh()
-            } else {
-                traktProgressService.refreshNow()
-            }
+            deviceSessionRegistration.requestForegroundRegistration()
+            startupSyncService.requestForegroundSync()
         }
+        lifecycleScope.launch {
+            val refreshIntent = if (isFirstResumeAfterCreate) {
+                isFirstResumeAfterCreate = false
+                TrackingRefreshIntent.INVALIDATED
+            } else {
+                TrackingRefreshIntent.AUTOMATIC
+            }
+            trackingProgressRefreshCoordinator.refreshConnected(refreshIntent)
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        captureDeepLinkIntent(intent)
+    }
+
+    private fun captureDeepLinkIntent(intent: Intent?) {
+        val url = intent?.dataString?.trim()?.takeIf(String::isNotBlank) ?: return
+        pendingDeepLinkUrl.value = url
     }
 
     override fun onPause() {
@@ -930,6 +1013,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onStop() {
+        externalPlaybackTracker.onExternalPlayerCoveredApp()
         super.onStop()
         startupSyncService.stopPeriodicSurfacePulls()
         // App going to background (e.g. user returning to the launcher): reconcile the
@@ -1186,7 +1270,11 @@ private fun LegacySidebarScaffold(
         }
     ) {
         val contentStartPadding by animateDpAsState(
-            targetValue = if (showSidebar) closedDrawerWidth else NuvioTheme.spacing.none,
+            targetValue = if (showSidebar && !sidebarCollapsed) {
+                NuvioLayout.tokens.sidebarContentOffset
+            } else {
+                NuvioTheme.spacing.none
+            },
             animationSpec = tween(NuvioMotion.tokens.durations.medium),
             label = "contentStartPadding"
         )
@@ -1851,7 +1939,12 @@ private fun navigateToDrawerRoute(
     if (currentRoute == targetRoute) {
         if (targetRoute == Screen.Home.route) {
             // Scroll Home to top by clearing saved focus/scroll state on the ViewModel.
-            val homeEntry = navController.getBackStackEntry(Screen.Home.route)
+            val homeEntry = try {
+                navController.getBackStackEntry(Screen.Home.route)
+            } catch (_: IllegalArgumentException) {
+                // "home" not yet on the back stack (e.g. nav graph not fully initialized).
+                return
+            }
             val homeViewModel = androidx.lifecycle.ViewModelProvider(homeEntry)[com.nuvio.tv.ui.screens.home.HomeViewModel::class.java]
             homeViewModel.requestScrollToTop()
         }

@@ -7,6 +7,7 @@ import com.nuvio.tv.LocaleCache
 import com.nuvio.tv.R
 import com.nuvio.tv.domain.model.CatalogRow
 import com.nuvio.tv.domain.model.Collection
+import com.nuvio.tv.domain.model.PLACEHOLDER_IMAGE_URL
 import com.nuvio.tv.domain.model.stableItemKey
 import com.nuvio.tv.ui.util.asStable
 import java.util.Locale
@@ -17,6 +18,7 @@ internal data class ModernHomePresentationInput(
     val homeRows: List<HomeRow>,
     val catalogRows: List<CatalogRow>,
     val continueWatchingItems: List<ContinueWatchingItem>,
+    val upcomingItems: List<ContinueWatchingItem>,
     val useLandscapePosters: Boolean,
     val showCatalogTypeSuffix: Boolean,
     val showFullReleaseDate: Boolean,
@@ -81,6 +83,42 @@ internal fun buildModernHomePresentation(
             cache.continueWatchingRow = null
         }
 
+        // Upcoming row (SPLIT_UPCOMING mode)
+        val strUpcomingSectionTitle = localizedContext.getString(R.string.upcoming_section_title)
+        if (input.upcomingItems.isNotEmpty()) {
+            val reuseUpcomingRow =
+                cache.upcomingRow != null &&
+                    cache.upcomingItems == input.upcomingItems &&
+                    cache.upcomingTitle == strUpcomingSectionTitle &&
+                    cache.upcomingUseLandscapePosters == input.useLandscapePosters
+            val upcomingRow = if (reuseUpcomingRow) {
+                checkNotNull(cache.upcomingRow)
+            } else {
+                HeroCarouselRow(
+                    key = MODERN_UPCOMING_ROW_KEY,
+                    title = strUpcomingSectionTitle,
+                    globalRowIndex = -1,
+                    items = input.upcomingItems.map { item ->
+                        buildContinueWatchingItem(
+                            item = item,
+                            useLandscapePosters = input.useLandscapePosters,
+                            airsDateTemplate = strAirsDate,
+                            upcomingLabel = strUpcoming,
+                            context = localizedContext
+                        )
+                    }.asStable()
+                )
+            }
+            cache.upcomingItems = input.upcomingItems
+            cache.upcomingTitle = strUpcomingSectionTitle
+            cache.upcomingUseLandscapePosters = input.useLandscapePosters
+            cache.upcomingRow = upcomingRow
+            add(upcomingRow)
+        } else {
+            cache.upcomingItems = emptyList()
+            cache.upcomingRow = null
+        }
+
         visibleHomeRows.forEachIndexed { index, homeRow ->
             when (homeRow) {
                 is HomeRow.Catalog -> {
@@ -136,7 +174,7 @@ internal fun buildModernHomePresentation(
                                     cachedItem.showFullReleaseDate == input.showFullReleaseDate
                                 ) {
                                     cachedItem.carouselItem.let { cached ->
-                                        val stableItemKey = row.stableItemKey(itemIndex, item)
+                                        val stableItemKey = row.stableItemKey(itemIndex)
                                         if (cached.key == stableItemKey) cached
                                         else cached.copy(key = stableItemKey)
                                     }
@@ -150,7 +188,7 @@ internal fun buildModernHomePresentation(
                                         strTypeSeries = strTypeSeries,
                                         showFullReleaseDate = input.showFullReleaseDate,
                                         previousCachedItem = cachedItem?.carouselItem
-                                    ).copy(key = row.stableItemKey(itemIndex, item))
+                                    ).copy(key = row.stableItemKey(itemIndex))
                                     rowItemCache[cacheKey] = CachedCarouselItem(
                                         source = item,
                                         useLandscapePosters = input.useLandscapePosters,
@@ -222,20 +260,21 @@ internal fun buildModernHomePresentation(
                         return@forEachIndexed
                     }
                     renderedCatalogRows++
+                    val stableRowKey = homeRow.stableCatalogKey
                     val fakeItemCount = 8
                     val fakeItems = (0 until fakeItemCount).map { i ->
                         val fakeId = "__placeholder_${homeRow.catalogKey}_$i"
                         ModernCarouselItem(
-                            key = "${homeRow.catalogKey}_$i",
+                            key = "${stableRowKey}_$i",
                             title = "",
                             subtitle = null,
                             // Dummy URL triggers shimmer instead of MonochromePosterPlaceholder
-                            imageUrl = "placeholder://empty",
+                            imageUrl = PLACEHOLDER_IMAGE_URL,
                             heroPreview = HeroPreview(
                                 title = "", logo = null, description = null,
                                 contentTypeText = null, yearText = null, imdbText = null,
                                 genres = com.nuvio.tv.ui.util.StableList(emptyList()), poster = null, backdrop = null,
-                                imageUrl = "placeholder://empty"
+                                imageUrl = PLACEHOLDER_IMAGE_URL
                             ),
                             payload = ModernPayload.Catalog(
                                 focusKey = "placeholder_${homeRow.catalogKey}_$i",
@@ -254,7 +293,7 @@ internal fun buildModernHomePresentation(
                         homeRow.catalogName.replaceFirstChar { it.uppercase() }
                     }
                     val placeholderRow = HeroCarouselRow(
-                        key = homeRow.catalogKey,
+                        key = stableRowKey,
                         title = placeholderTitle,
                         globalRowIndex = index,
                         catalogId = homeRow.catalogId,

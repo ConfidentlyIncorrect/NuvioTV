@@ -15,6 +15,9 @@ import com.nuvio.tv.data.local.LayoutPreferenceDataStore
 import com.nuvio.tv.data.local.StreamBadgeSettingsDataStore
 import com.nuvio.tv.data.local.TraktSettingsDataStore
 import com.nuvio.tv.data.local.TrailerSettingsDataStore
+import com.nuvio.tv.domain.model.CardDepthStyle
+import com.nuvio.tv.domain.model.CardDepthSurface
+import com.nuvio.tv.domain.model.ContinueWatchingCardStyle
 import com.nuvio.tv.domain.model.ContinueWatchingSortMode
 import com.nuvio.tv.domain.model.DiscoverLocation
 import com.nuvio.tv.domain.model.FocusedPosterTrailerPlaybackTarget
@@ -58,6 +61,7 @@ data class LayoutSettingsUiState(
     val posterCardWidthDp: Int = 126,
     val posterCardHeightDp: Int = 189,
     val posterCardCornerRadiusDp: Int = 12,
+    val cardDepthStyle: CardDepthStyle = CardDepthStyle(),
     val blurUnwatchedEpisodes: Boolean = false,
     val blurContinueWatchingNextUp: Boolean = false,
     val useEpisodeThumbnailsInCw: Boolean = true,
@@ -71,7 +75,8 @@ data class LayoutSettingsUiState(
     val showFullReleaseDate: Boolean = true,
     val nextUpFromFurthestEpisode: Boolean = true,
     val showUnairedNextUp: Boolean = true,
-    val continueWatchingSortMode: ContinueWatchingSortMode = ContinueWatchingSortMode.DEFAULT
+    val continueWatchingSortMode: ContinueWatchingSortMode = ContinueWatchingSortMode.DEFAULT,
+    val continueWatchingCardStyle: ContinueWatchingCardStyle = ContinueWatchingCardStyle.CARD,
 )
 
 data class CatalogInfo(
@@ -103,6 +108,14 @@ sealed class LayoutSettingsEvent {
     ) : LayoutSettingsEvent()
     data class SetPosterCardWidth(val widthDp: Int) : LayoutSettingsEvent()
     data class SetPosterCardCornerRadius(val cornerRadiusDp: Int) : LayoutSettingsEvent()
+    data class SetCardDepthEnabled(val enabled: Boolean) : LayoutSettingsEvent()
+    data class SetCardDepthEdgeStrength(val strength: Int) : LayoutSettingsEvent()
+    data class SetCardDepthSheenStrength(val strength: Int) : LayoutSettingsEvent()
+    data class SetCardDepthEdgeCoverage(val coverage: Int) : LayoutSettingsEvent()
+    data class SetCardDepthSurfaceEnabled(
+        val surface: CardDepthSurface,
+        val enabled: Boolean
+    ) : LayoutSettingsEvent()
     data class SetBlurUnwatchedEpisodes(val enabled: Boolean) : LayoutSettingsEvent()
     data class SetBlurContinueWatchingNextUp(val enabled: Boolean) : LayoutSettingsEvent()
     data class SetUseEpisodeThumbnailsInCw(val enabled: Boolean) : LayoutSettingsEvent()
@@ -117,7 +130,9 @@ sealed class LayoutSettingsEvent {
     data class SetNextUpFromFurthestEpisode(val enabled: Boolean) : LayoutSettingsEvent()
     data class SetShowUnairedNextUp(val enabled: Boolean) : LayoutSettingsEvent()
     data class SetContinueWatchingSortMode(val mode: ContinueWatchingSortMode) : LayoutSettingsEvent()
+    data class SetContinueWatchingCardStyle(val style: ContinueWatchingCardStyle) : LayoutSettingsEvent()
     data object ResetPosterCardStyle : LayoutSettingsEvent()
+    data object ResetCardDepthStyle : LayoutSettingsEvent()
 }
 
 @HiltViewModel
@@ -271,6 +286,11 @@ class LayoutSettingsViewModel @Inject constructor(
             }
         }
         viewModelScope.launch {
+            layoutPreferenceDataStore.cardDepthStyle.distinctUntilChanged().collectLatest { style ->
+                updateUiStateIfChanged { it.copy(cardDepthStyle = style) }
+            }
+        }
+        viewModelScope.launch {
             layoutPreferenceDataStore.blurUnwatchedEpisodes.distinctUntilChanged().collectLatest { enabled ->
                 updateUiStateIfChanged { it.copy(blurUnwatchedEpisodes = enabled) }
             }
@@ -342,6 +362,13 @@ class LayoutSettingsViewModel @Inject constructor(
                     updateUiStateIfChanged { it.copy(continueWatchingSortMode = mode) }
                 }
         }
+        viewModelScope.launch {
+            layoutPreferenceDataStore.continueWatchingCardStyle
+                .distinctUntilChanged()
+                .collect { style ->
+                    updateUiStateIfChanged { it.copy(continueWatchingCardStyle = style) }
+                }
+        }
         loadAvailableCatalogs()
     }
 
@@ -368,6 +395,12 @@ class LayoutSettingsViewModel @Inject constructor(
                 setFocusedPosterBackdropTrailerPlaybackTarget(event.target)
             is LayoutSettingsEvent.SetPosterCardWidth -> setPosterCardWidth(event.widthDp)
             is LayoutSettingsEvent.SetPosterCardCornerRadius -> setPosterCardCornerRadius(event.cornerRadiusDp)
+            is LayoutSettingsEvent.SetCardDepthEnabled -> setCardDepthEnabled(event.enabled)
+            is LayoutSettingsEvent.SetCardDepthEdgeStrength -> setCardDepthEdgeStrength(event.strength)
+            is LayoutSettingsEvent.SetCardDepthSheenStrength -> setCardDepthSheenStrength(event.strength)
+            is LayoutSettingsEvent.SetCardDepthEdgeCoverage -> setCardDepthEdgeCoverage(event.coverage)
+            is LayoutSettingsEvent.SetCardDepthSurfaceEnabled ->
+                setCardDepthSurfaceEnabled(event.surface, event.enabled)
             is LayoutSettingsEvent.SetBlurUnwatchedEpisodes -> setBlurUnwatchedEpisodes(event.enabled)
             is LayoutSettingsEvent.SetBlurContinueWatchingNextUp -> setBlurContinueWatchingNextUp(event.enabled)
             is LayoutSettingsEvent.SetUseEpisodeThumbnailsInCw -> setUseEpisodeThumbnailsInCw(event.enabled)
@@ -382,7 +415,9 @@ class LayoutSettingsViewModel @Inject constructor(
             is LayoutSettingsEvent.SetNextUpFromFurthestEpisode -> setNextUpFromFurthestEpisode(event.enabled)
             is LayoutSettingsEvent.SetShowUnairedNextUp -> setShowUnairedNextUp(event.enabled)
             is LayoutSettingsEvent.SetContinueWatchingSortMode -> setContinueWatchingSortMode(event.mode)
+            is LayoutSettingsEvent.SetContinueWatchingCardStyle -> setContinueWatchingCardStyle(event.style)
             LayoutSettingsEvent.ResetPosterCardStyle -> resetPosterCardStyle()
+            LayoutSettingsEvent.ResetCardDepthStyle -> resetCardDepthStyle()
         }
     }
 
@@ -600,6 +635,41 @@ class LayoutSettingsViewModel @Inject constructor(
         }
     }
 
+    private fun setCardDepthEnabled(enabled: Boolean) {
+        if (_uiState.value.cardDepthStyle.enabled == enabled) return
+        viewModelScope.launch {
+            layoutPreferenceDataStore.setCardDepthEnabled(enabled)
+        }
+    }
+
+    private fun setCardDepthEdgeStrength(strength: Int) {
+        if (_uiState.value.cardDepthStyle.edgeStrength == strength) return
+        viewModelScope.launch {
+            layoutPreferenceDataStore.setCardDepthEdgeStrength(strength)
+        }
+    }
+
+    private fun setCardDepthSheenStrength(strength: Int) {
+        if (_uiState.value.cardDepthStyle.sheenStrength == strength) return
+        viewModelScope.launch {
+            layoutPreferenceDataStore.setCardDepthSheenStrength(strength)
+        }
+    }
+
+    private fun setCardDepthEdgeCoverage(coverage: Int) {
+        if (_uiState.value.cardDepthStyle.edgeCoverage == coverage) return
+        viewModelScope.launch {
+            layoutPreferenceDataStore.setCardDepthEdgeCoverage(coverage)
+        }
+    }
+
+    private fun setCardDepthSurfaceEnabled(surface: CardDepthSurface, enabled: Boolean) {
+        if (_uiState.value.cardDepthStyle.isSurfaceEnabled(surface) == enabled) return
+        viewModelScope.launch {
+            layoutPreferenceDataStore.setCardDepthSurfaceEnabled(surface, enabled)
+        }
+    }
+
     private fun setDetailPageTrailerButtonEnabled(enabled: Boolean) {
         if (_uiState.value.detailPageTrailerButtonEnabled == enabled) return
         viewModelScope.launch {
@@ -688,6 +758,13 @@ class LayoutSettingsViewModel @Inject constructor(
         }
     }
 
+    private fun setContinueWatchingCardStyle(style: ContinueWatchingCardStyle) {
+        if (_uiState.value.continueWatchingCardStyle == style) return
+        viewModelScope.launch {
+            layoutPreferenceDataStore.setContinueWatchingCardStyle(style)
+        }
+    }
+
     private fun setContinueWatchingSortMode(mode: ContinueWatchingSortMode) {
         if (_uiState.value.continueWatchingSortMode == mode) return
         viewModelScope.launch {
@@ -707,6 +784,13 @@ class LayoutSettingsViewModel @Inject constructor(
             layoutPreferenceDataStore.setPosterCardWidthDp(126)
             layoutPreferenceDataStore.setPosterCardHeightDp(189)
             layoutPreferenceDataStore.setPosterCardCornerRadiusDp(12)
+        }
+    }
+
+    private fun resetCardDepthStyle() {
+        if (_uiState.value.cardDepthStyle == CardDepthStyle()) return
+        viewModelScope.launch {
+            layoutPreferenceDataStore.resetCardDepthStyle()
         }
     }
 

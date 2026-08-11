@@ -9,6 +9,7 @@ import com.nuvio.tv.domain.model.CatalogDescriptor
 import com.nuvio.tv.domain.model.CatalogRow
 import com.nuvio.tv.domain.model.Collection
 import com.nuvio.tv.domain.model.HomeLayout
+import com.nuvio.tv.domain.model.catalogRowStableKey
 import com.nuvio.tv.domain.model.enabledAddons
 import com.nuvio.tv.domain.model.legacyKey
 import com.nuvio.tv.domain.model.mergeCatalogPage
@@ -26,6 +27,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import com.nuvio.tv.domain.model.MetaPreview
+import com.nuvio.tv.domain.model.PLACEHOLDER_IMAGE_URL
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.withPermit
 import com.nuvio.tv.core.util.filterReleasedItems
@@ -46,7 +48,9 @@ internal fun HomeViewModel.observeCollectionsPipeline() {
             .distinctUntilChanged()
             .debounce(300)
             .collectLatest { collections ->
-                collectionsCache = collections
+                // Deduplicate by collection ID (keep last occurrence) to prevent
+                // duplicate LazyColumn keys when users import overlapping collections.
+                collectionsCache = collections.associateBy { it.id }.values.toList()
                 rebuildCatalogOrder(addonsCache)
                 scheduleUpdateCatalogRows()
             }
@@ -104,15 +108,18 @@ internal fun HomeViewModel.observeTmdbSettingsPipeline() {
             .distinctUntilChanged()
             .collectLatest { settings ->
                 val languageChanged = currentTmdbSettings.language != settings.language
+                val releaseDatesChanged = currentTmdbSettings.useReleaseDates != settings.useReleaseDates
                 currentTmdbSettings = settings
                 val tmdbEnabledForLayout = settings.enabled &&
                     (_uiState.value.homeLayout != HomeLayout.MODERN || settings.modernHomeEnabled)
                 val enrichEnabled = tmdbEnabledForLayout || externalMetaPrefetchEnabled
                 _uiState.update { it.copy(heroEnrichmentEnabled = enrichEnabled) }
-                if (languageChanged) {
-                    // Allow re-enrichment with the new language on next focus.
+                if (languageChanged || releaseDatesChanged) {
+                    // Allow re-enrichment with the updated TMDB metadata selection on next focus.
                     prefetchedTmdbIds.clear()
                     prefetchedExternalMetaIds.clear()
+                    _enrichedPreviews.value = emptyMap()
+                    _lastEnrichedPreview.value = null
                 }
                 scheduleUpdateCatalogRows()
             }
@@ -659,13 +666,17 @@ internal suspend fun HomeViewModel.updateCatalogRowsPipeline() {
 
         val computedDisplayRows = orderedRows.map { row ->
             val shouldKeepFullRowInModern = currentLayout == HomeLayout.MODERN
-            if (row.items.size > 25 && !shouldKeepFullRowInModern) {
+            val gridTruncateLimit = 24
+            if (row.items.size > gridTruncateLimit && !shouldKeepFullRowInModern) {
                 val key = row.legacyKey()
                 val cachedEntry = getTruncatedRowCacheEntry(key)
                 if (cachedEntry != null && cachedEntry.sourceRow === row) {
                     cachedEntry.truncatedRow
                 } else {
-                    val truncatedRow = row.copy(items = row.items.take(25))
+                    val truncatedRow = row.copy(
+                        items = row.items.take(gridTruncateLimit),
+                        hasMore = true
+                    )
                     putTruncatedRowCacheEntry(
                         key,
                         HomeViewModel.TruncatedRowCacheEntry(
@@ -698,9 +709,10 @@ internal suspend fun HomeViewModel.updateCatalogRowsPipeline() {
             val placeholdersByKey = synchronized(catalogStateLock) {
                 placeholderDescriptors.associateBy { it.catalogKey }
             }
+            val addedCollectionIds = mutableSetOf<String>()
             collectionsCache.forEach { collection ->
                 val key = "collection_${collection.id}"
-            if (collection.pinToTop && key !in disabledHomeCatalogKeys) {
+            if (collection.pinToTop && key !in disabledHomeCatalogKeys && addedCollectionIds.add(collection.id)) {
                 add(HomeRow.CollectionRow(collection))
             }
         }
@@ -708,7 +720,7 @@ internal suspend fun HomeViewModel.updateCatalogRowsPipeline() {
             if (key in disabledHomeCatalogKeys) continue
             val collectionEntry = collectionsSnapshot[key]
             if (collectionEntry != null) {
-                if (!collectionEntry.pinToTop) {
+                if (!collectionEntry.pinToTop && addedCollectionIds.add(collectionEntry.id)) {
                     add(HomeRow.CollectionRow(collectionEntry))
                 }
             } else {
@@ -721,6 +733,12 @@ internal suspend fun HomeViewModel.updateCatalogRowsPipeline() {
                         if (currentLayout == HomeLayout.MODERN) {
                             add(HomeRow.PlaceholderCatalog(
                                 catalogKey = placeholder.catalogKey,
+                                stableCatalogKey = catalogRowStableKey(
+                                    placeholder.addonId,
+                                    placeholder.addonBaseUrl,
+                                    placeholder.apiType,
+                                    placeholder.catalogId
+                                ),
                                 addonId = placeholder.addonId,
                                 addonName = placeholder.addonName,
                                 addonBaseUrl = placeholder.addonBaseUrl,
@@ -736,7 +754,7 @@ internal suspend fun HomeViewModel.updateCatalogRowsPipeline() {
                                     type = com.nuvio.tv.domain.model.ContentType.fromString(placeholder.apiType),
                                     rawType = placeholder.apiType,
                                     name = " ",
-                                    poster = "placeholder://empty",
+                                    poster = PLACEHOLDER_IMAGE_URL,
                                     posterShape = com.nuvio.tv.domain.model.PosterShape.POSTER,
                                     background = null,
                                     logo = null,
@@ -767,13 +785,12 @@ internal suspend fun HomeViewModel.updateCatalogRowsPipeline() {
 
     val nextGridItems = if (currentLayout == HomeLayout.GRID) {
         val posterCardWidthDp = _uiState.value.posterCardWidthDp
-        val itemsPerRow = when (posterCardWidthDp) {
-            104 -> 7; 112 -> 6; 120 -> 6; 126 -> 6; 134 -> 5; 140 -> 5; else -> 6
-        }
         val rowCount = if (posterCardWidthDp <= 104) 2 else 3
-        val seeAllThreshold = itemsPerRow * rowCount + 2
-        val maxWithSeeAll = itemsPerRow * rowCount - 1
-        val maxWithoutSeeAll = itemsPerRow * rowCount
+        // Provide generous upper bound of items — the Composable layer will trim
+        // based on the actual column count from GridCells.Adaptive layout info.
+        // We use 8 as safe max columns (widest known config) to avoid cutting too early.
+        val safeMaxColumns = 8
+        val maxDisplaySlots = safeMaxColumns * rowCount
         buildList {
             if (heroSectionEnabled && baseHeroItems.isNotEmpty()) {
                 add(GridItem.Hero(baseHeroItems))
@@ -792,8 +809,11 @@ internal suspend fun HomeViewModel.updateCatalogRowsPipeline() {
                                 addonId = row.addonId,
                                 type = row.apiType
                             ))
-                            val hasEnoughForSeeAll = row.hasMore || row.items.size >= seeAllThreshold
-                            val displayItems = if (hasEnoughForSeeAll) row.items.take(maxWithSeeAll) else row.items.take(maxWithoutSeeAll)
+                            // Show "See All" if there are more items than fit in the
+                            // displayed rows, or the API indicates more pages exist.
+                            val showSeeAll = row.hasMore || row.items.size > maxDisplaySlots
+                            val rawMax = if (showSeeAll) maxDisplaySlots - 1 else maxDisplaySlots
+                            val displayItems = row.items.take(rawMax)
                             displayItems.forEach { item ->
                                 add(GridItem.Content(
                                     item = item,
@@ -802,10 +822,11 @@ internal suspend fun HomeViewModel.updateCatalogRowsPipeline() {
                                     catalogName = row.catalogName
                                 ))
                             }
-                            if (hasEnoughForSeeAll) {
+                            if (showSeeAll) {
                                 add(GridItem.SeeAll(
                                     catalogId = row.catalogId,
                                     addonId = row.addonId,
+                                    addonBaseUrl = row.addonBaseUrl,
                                     type = row.apiType
                                 ))
                             }
@@ -980,11 +1001,13 @@ internal fun HomeViewModel.reconcilePosterStatusObserversPipeline(rows: List<Cat
         seriesWatchedObserverJob = viewModelScope.launch {
             combine(
                 fullyWatchedSeriesIds.fullyWatchedSeriesIds,
-                watchedItemsPreferences.allItems
+                watchProgressRepository.watchedItems
             ) { fullyWatched, watchedItems ->
                 fullyWatched to watchedItems
             }.collectLatest { (fullyWatched, watchedItems) ->
-                val effectiveFullyWatched = if (watchProgressRepository.isTraktProgressActive()) {
+                val effectiveFullyWatched = if (
+                    watchProgressRepository.activeProviderOwnsCompletedHistoryProjection()
+                ) {
                     fullyWatched
                 } else {
                     reconcileFullyWatchedFromLocalItems(

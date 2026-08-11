@@ -62,6 +62,7 @@ import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.nuvio.tv.domain.model.ContentType
+import com.nuvio.tv.domain.model.CardDepthSurface
 import com.nuvio.tv.domain.model.MetaPreview
 import com.nuvio.tv.domain.model.PosterShape
 import com.nuvio.tv.ui.theme.NuvioTheme
@@ -71,6 +72,7 @@ import coil3.request.CachePolicy
 import coil3.request.crossfade
 import com.nuvio.tv.ui.util.recompositionHighlighter
 import com.nuvio.tv.ui.screens.home.LocalFastScrollActive
+import com.nuvio.tv.domain.model.PLACEHOLDER_IMAGE_URL
 import com.nuvio.tv.ui.theme.ThemeColors
 import com.nuvio.tv.ui.util.rememberLongPressKeyTracker
 import kotlinx.coroutines.delay
@@ -105,6 +107,7 @@ fun ContentCard(
     onClick: () -> Unit = {}
 ) {
     val cardShape = remember(posterCardStyle.cornerRadius) { RoundedCornerShape(posterCardStyle.cornerRadius) }
+    val cardDepthStyle = LocalCardDepthStyle.current
     val baseCardWidth = when (item.posterShape) {
         PosterShape.POSTER -> posterCardStyle.width
         PosterShape.LANDSCAPE -> 260.dp
@@ -133,7 +136,7 @@ fun ContentCard(
     val needsFocusState = true
     val lastFocusedRef = remember { booleanArrayOf(false) }
 
-    val isPlaceholderItem = item.poster?.startsWith("placeholder://") == true
+    val isPlaceholderItem = item.poster == PLACEHOLDER_IMAGE_URL
 
     if (focusedPosterBackdropExpandEnabled && !isPlaceholderItem) {
         LaunchedEffect(
@@ -356,8 +359,13 @@ fun ContentCard(
                     .fillMaxWidth()
                     .height(baseCardHeight)
                     .clip(cardShape)
+                    .nuvioCardDepth(
+                        shape = cardShape,
+                        surface = CardDepthSurface.POSTERS,
+                        style = cardDepthStyle
+                    )
             ) {
-                val isPlaceholderItem = imageUrl?.startsWith("placeholder://") == true
+                val isPlaceholderItem = imageUrl == PLACEHOLDER_IMAGE_URL
                 if (isPlaceholderItem) {
                     val effectivePlaceholderShimmerOffsetState =
                         placeholderShimmerOffsetState ?: rememberPlaceholderShimmerOffsetState(
@@ -411,6 +419,15 @@ fun ContentCard(
                 }
 
                 if (shouldPlayTrailerPreview) {
+                    // Black plate under FIT-mode video so non-16:9 trailers letterbox
+                    // to black instead of revealing the expanded backdrop (#2852).
+                    // The backdrop cover above still hides load-in; it fades out after
+                    // the first frame, leaving black + trailer only.
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color.Black)
+                    )
                     TrailerPlayer(
                         trailerUrl = trailerPreviewUrl,
                         trailerAudioUrl = trailerPreviewAudioUrl,
@@ -559,6 +576,13 @@ fun ContentCard(
     }
 }
 
+/**
+ * Keys that should collapse an expanded poster so navigation can re-arm expand.
+ *
+ * Select keys (Center / Enter) are intentionally excluded: holding them opens the
+ * action menu. Resetting the expand timer on those keys collapsed and re-expanded
+ * the card while the menu was opening (#2574).
+ */
 private fun shouldResetBackdropTimer(nativeEvent: AndroidKeyEvent): Boolean {
     val key = nativeEvent.keyCode
     return when (key) {
@@ -566,9 +590,6 @@ private fun shouldResetBackdropTimer(nativeEvent: AndroidKeyEvent): Boolean {
         AndroidKeyEvent.KEYCODE_DPAD_DOWN,
         AndroidKeyEvent.KEYCODE_DPAD_LEFT,
         AndroidKeyEvent.KEYCODE_DPAD_RIGHT,
-        AndroidKeyEvent.KEYCODE_DPAD_CENTER,
-        AndroidKeyEvent.KEYCODE_ENTER,
-        AndroidKeyEvent.KEYCODE_NUMPAD_ENTER,
         AndroidKeyEvent.KEYCODE_BACK -> true
         else -> false
     }

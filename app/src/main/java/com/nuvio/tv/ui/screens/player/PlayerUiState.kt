@@ -80,7 +80,7 @@ data class PlayerUiState(
     val pendingPreviewSeekPosition: Long? = null,
     val playbackSpeed: Float = 1f,
     val loadingOverlayEnabled: Boolean = true,
-    val showPlayerLoadingStatus: Boolean = true,
+    val showPlayerLoadingStatus: Boolean = false,
     val playbackIssueReportsEnabled: Boolean = false,
     val showLoadingOverlay: Boolean = true,
     val loadingMessage: String? = null,
@@ -255,6 +255,7 @@ data class NextEpisodeInfo(
 
 data class SubtitleSyncCue(
     val startTimeMs: Long,
+    val endTimeMs: Long,
     val text: String
 )
 
@@ -288,6 +289,7 @@ sealed class PlayerEvent {
     data object OnShowSubtitleDelayOverlay : PlayerEvent()
     data object OnHideSubtitleDelayOverlay : PlayerEvent()
     data class OnAdjustSubtitleDelay(val deltaMs: Int, val showOverlay: Boolean = true) : PlayerEvent()
+    data class OnResetSubtitleDelay(val showOverlay: Boolean = true) : PlayerEvent()
     data object OnShowSpeedDialog : PlayerEvent()
     data object OnShowMoreDialog : PlayerEvent()
     data object OnDismissMoreDialog : PlayerEvent()

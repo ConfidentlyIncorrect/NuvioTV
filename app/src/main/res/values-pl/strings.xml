@@ -13,7 +13,9 @@
     <!-- ContinueWatchingSection -->
     <string name="continue_watching">Kontynuuj oglądanie</string>
     <string name="cw_upcoming">Nadchodzące</string>
+    <string name="upcoming_section_title">Nadchodzące</string>
     <string name="cw_next_up">Następny odcinek</string>
+    <string name="cw_next_up_short">Następny</string>
     <string name="cw_resume">Wznów</string>
     <string name="cw_percent_watched">%1$d%% obejrzane</string>
     <string name="cw_hours_min_left">Zostało %1$d h %2$d min</string>
@@ -27,6 +29,16 @@
         <item quantity="few">Emisja za %d dni</item>
         <item quantity="many">Emisja za %d dni</item>
         <item quantity="other">Emisja za %d dni</item>
+    </plurals>
+    <!-- Short versions for compact card styles (wide/poster) -->
+    <string name="cw_airs_date_short">%1$s</string>
+    <string name="cw_airs_today_short">Dzisiaj</string>
+    <string name="cw_airs_tomorrow_short">Jutro</string>
+    <plurals name="cw_airs_in_days_short">
+        <item quantity="one">Za %d dzień</item>
+        <item quantity="few">Za %d dni</item>
+        <item quantity="many">Za %d dni</item>
+        <item quantity="other">Za %d dni</item>
     </plurals>
     <string name="cw_action_go_to_details">Przejdź do szczegółów</string>
     <string name="cw_action_remove">Usuń</string>
@@ -306,13 +318,6 @@
     <string name="sub_org_none_desc">Pokaż napisy w domyślnej kolejności wyników dodatku.</string>
     <string name="sub_org_by_lang_desc">Grupuj napisy według języka.</string>
     <string name="sub_org_by_addon_desc">Grupuj napisy według źródła dodatku.</string>
-    <string name="sub_startup_mode_title">Wczytywanie napisów z dodatków</string>
-    <string name="sub_startup_mode_fast">Szybki start</string>
-    <string name="sub_startup_mode_preferred">Preferowane języki</string>
-    <string name="sub_startup_mode_all">Wszystkie napisy z dodatków</string>
-    <string name="sub_startup_mode_fast_desc">Uruchom odtwarzanie natychmiast. Wybór napisów z dodatku może raz przeładować odtwarzacz.</string>
-    <string name="sub_startup_mode_preferred_desc">Pobierz napisy z dodatków przed odtwarzaniem i dołącz preferowane/drugorzedne ścieżki językowe.</string>
-    <string name="sub_startup_mode_all_desc">Pobierz i dołącz wszystkie napisy z dodatków przed odtwarzaniem. Najwolniejszy start.</string>
 
     <!-- PlaybackAutoPlaySettings -->
     <string name="autoplay_reuse_last_link">Ponownie użyj ostatniego linku</string>
@@ -329,6 +334,8 @@
     <string name="autoplay_stream_selection">Automatyczny wybór strumienia</string>
     <string name="autoplay_next_episode">Auto-odtwarzaj następny odcinek</string>
     <string name="autoplay_next_episode_sub">Automatycznie rozpocznij następny odcinek gdy pojawi się monit.</string>
+    <string name="autoplay_next_episode_fallback">Fallback gdy grupa binge nie zostanie znaleziona</string>
+    <string name="autoplay_next_episode_fallback_sub">Automatycznie wybierz pierwszy dostępny strumień jeśli grupa binge nie zostanie znaleziona. Gdy wyłączone, wyświetla wybór źródła.</string>
     <string name="autoplay_prefer_binge_group">Preferuj grupę Binge (następny odcinek)</string>
     <string name="autoplay_prefer_binge_group_sub">Najpierw spróbuj tego samego profilu źródła przed normalnymi regułami auto-odtwarzania.</string>
     <string name="autoplay_reuse_binge_group">Ponownie użyj grupy Binge</string>
@@ -418,6 +425,9 @@
     <string name="layout_next_up_furthest_episode_sub">Pokazuj następny odcinek na podstawie najdalszego obejrzanego. Wyłącz przy ponownym oglądaniu, aby używać ostatnio obejrzanego odcinka.</string>
     <string name="layout_show_unaired_next_up">Pokaż niewyemitowane odcinki</string>
     <string name="layout_show_unaired_next_up_sub">Uwzględnij nadchodzące odcinki w Kontynuuj oglądanie przed ich emisją.</string>
+    <string name="layout_cw_card_style_card">Karta</string>
+    <string name="layout_cw_card_style_wide">Szeroka</string>
+    <string name="layout_cw_card_style_poster">Plakat</string>
     <string name="layout_trailer_button">Pokaż przycisk zwiastuna</string>
     <string name="layout_trailer_button_sub">Pokaż przycisk zwiastuna na stronie szczegółów (tylko gdy zwiastun jest dostępny).</string>
     <string name="layout_prefer_external_meta">Preferuj metadane z zewnętrznego dodatku</string>
@@ -1060,7 +1070,7 @@
     <string name="supporters_contributors_donate_copy">Nuvio pozostanie darmowe i open source. Jeśli chcesz wesprzeć projekt, możesz pomóc pokryć czas i infrastrukturę za nim stojącą.</string>
     <string name="supporters_contributors_donate_button">Wesprzyj Nuvio</string>
     <string name="supporters_contributors_qr_title">Zeskanuj, aby wesprzeć</string>
-    <string name="supporters_contributors_qr_subtitle">Otwórz link na telefonie i wesprzyj Nuvio przez Ko-fi.</string>
+    <string name="supporters_contributors_qr_subtitle">Otwórz link na telefonie, aby wesprzeć Nuvio.</string>
     <string name="supporters_contributors_qr_hint">Skieruj aparat na kod QR lub użyj przycisku poniżej.</string>
     <string name="supporters_contributors_back_button">Wróć do szczegółów</string>
     <string name="supporters_tab">Wspierający</string>
@@ -1148,6 +1158,7 @@
     <string name="error_stream_tried_issues">Wypróbowane dodatki strumieni: %1$s. Nie można załadować strumieni dla id=%2$s (typ=%3$s). Problemy: %4$s.</string>
 
     <string name="cw_new_episode">Nowy odcinek</string>
+    <string name="cw_new_episode_short">Nowy</string>
     <string name="cw_new_season">Nowy sezon</string>
 
     <string name="detail_comments_title">Komentarze</string>
@@ -2114,6 +2125,8 @@
     <string name="layout_cw_sort_mode_sub">Jak elementy Kontynuuj oglądanie są ułożone</string>
     <string name="layout_cw_sort_streaming">Styl streamingowy</string>
     <string name="layout_cw_sort_streaming_desc">Wydane elementy najpierw, nadchodzące na końcu</string>
+    <string name="layout_cw_sort_split_upcoming">Oddzielny rząd Nadchodzące</string>
+    <string name="layout_cw_sort_split_upcoming_desc">Przenieś niewydane odcinki do oddzielnego rzędu Nadchodzące</string>
     <string name="layout_discover_location_action">Lokalizacja Odkrywaj</string>
     <string name="layout_discover_location_dialog_title">Lokalizacja Odkrywaj</string>
     <string name="layout_discover_location_in_search">Pokaż w Szukaj</string>
@@ -2741,4 +2754,258 @@
     <string name="web_stream_badge_error_url_required">Wprowadź URL JSON odznak.</string>
     <string name="web_stream_badge_error_url_scheme">URL odznak musi zaczynać się od http:// lub https://.</string>
     <string name="web_stream_badge_error_import_limit">Możesz zaimportować maksymalnie %1$d adresów URL odznak.</string>
+
+    <!-- Account sign out -->
+    <string name="account_sign_out_confirm_title">Wylogować się?</string>
+    <string name="account_sign_out_confirm_subtitle">Aby synchronizować bibliotekę, postęp oglądania, dodatki i wtyczki na tym urządzeniu, konieczne będzie ponowne zalogowanie.</string>
+    <string name="account_signin_email_title">Zaloguj się</string>
+    <string name="account_signin_email_subtitle">Wprowadź e-mail i hasło konta na serwerze własnym</string>
+
+    <!-- Auth -->
+    <string name="auth_email_hint">Zaloguj się bezpośrednio na konto na własnym serwerze.</string>
+    <string name="auth_email_instruction">Wprowadź e-mail i hasło, aby kontynuować.</string>
+    <string name="auth_email_placeholder">Adres e-mail</string>
+    <string name="auth_email_sign_in">Zaloguj się</string>
+    <string name="auth_email_signing_in">Logowanie\u2026</string>
+    <string name="auth_password_placeholder">Hasło</string>
+    <string name="auth_qr_tagline">Oglądaj swoją bibliotekę, gdziekolwiek jesteś</string>
+    <string name="auth_qr_terms_link">Regulaminu</string>
+    <string name="auth_qr_terms_prefix">Rejestrując się / logując, akceptuję postanowienia</string>
+
+    <!-- Actions -->
+    <string name="action_switch">Przełącz</string>
+
+    <!-- Hero synopsis -->
+    <string name="hero_synopsis_read_more">Czytaj więcej</string>
+    <string name="hero_synopsis_dismiss_hint">Naciśnij wstecz, aby zamknąć</string>
+
+    <!-- Appearance settings style -->
+    <string name="appearance_settings_style">Styl ustawień</string>
+    <string name="appearance_settings_style_subtitle">Wybierz sposób prezentacji ekranów ustawień</string>
+    <string name="settings_style_classic">Domyślny</string>
+    <string name="settings_style_classic_desc">Standardowy układ z kartami</string>
+    <string name="settings_style_zen">Minimalny</string>
+    <string name="settings_style_zen_desc">Prosty, płaski układ</string>
+    <string name="settings_style_horizon">Pasek górny</string>
+    <string name="settings_style_horizon_desc">Zakładki nawigacyjne na górze</string>
+
+    <!-- Audio advanced -->
+    <string name="audio_force_optical_passthrough">Wymuś transkodowanie AC-3 (Optyczne/SPDIF)</string>
+    <string name="audio_force_optical_passthrough_sub">Transkoduje formaty wielokanałowe (TrueHD, DTS, AAC itp.) do Dolby Digital 5.1 w czasie rzeczywistym dla połączeń optycznych/SPDIF.</string>
+    <string name="audio_strip_hdr10plus_title">Usuń metadane HDR10+</string>
+    <string name="audio_strip_hdr10plus_sub">Usuwa dynamiczne metadane HDR10+ ze strumieni. Gdy włączono również Konwertuj do DV8.1, usuwanie następuje po konwersji.</string>
+
+    <!-- Advanced settings -->
+    <string name="advanced_nuvio_performance_mode">Pamięć natywna ExoPlayer</string>
+    <string name="advanced_nuvio_performance_mode_subtitle">Włącza wysokowydajny natywny alokator, pamięć poza stertą i optymalizacje sieciowe dla płynniejszego odtwarzania</string>
+    <string name="advanced_playback_issue_reports">Raporty problemów z odtwarzaniem</string>
+    <string name="advanced_playback_issue_reports_subtitle">Pokaż przyciski zgłaszania problemów podczas odtwarzania, długiego ładowania i błędów odtwarzania</string>
+    <string name="advanced_sentry_reports">Raporty awarii Sentry</string>
+    <string name="advanced_sentry_reports_subtitle">Wysyłaj raporty awarii i ANR z bezpiecznym kontekstem. Domyślnie włączone.</string>
+
+    <!-- Buffer -->
+    <string name="buffer_auto_limit_active">Automatycznie skalowany bezpieczny limit: %d MB</string>
+    <string name="buffer_device_ram_info">RAM urządzenia: %s</string>
+    <string name="buffer_safe_limit_info">Zalecany bezpieczny limit: %d MB</string>
+    <string name="buffer_safe_status">Bezpieczny: W granicach zalecanego limitu dla Twojego urządzenia.</string>
+    <string name="buffer_unsafe_warning">Uwaga: Przekracza zalecany bezpieczny limit (%1$d MB) dla urządzenia %2$s. Może powodować awarie aplikacji.</string>
+    <string name="playback_buffer_target_danger_warning">Niebezpieczeństwo: Powyżej limitu ostrzegawczego (%1$d MB). Wysokie ryzyko awarii.</string>
+
+    <!-- Debug progress indicator -->
+    <string name="debug_section_progress">Wskaźnik postępu</string>
+    <string name="debug_progress_indicator_title">Wskaźnik ładowania</string>
+    <string name="debug_progress_indicator_subtitle">Podgląd animacji ładowania w typowych rozmiarach UI</string>
+    <string name="debug_progress_indicator_default">Domyślny</string>
+    <string name="debug_progress_indicator_small">Mały</string>
+    <string name="debug_progress_indicator_large">Duży</string>
+
+    <!-- External player -->
+    <string name="external_player_loading_skip_segments">Ładowanie segmentów intro/outro…</string>
+    <string name="playback_external_send_skip_segments">Wysyłaj znaczniki intro i outro</string>
+    <string name="playback_external_send_skip_segments_sub">Przekazuj rozwiązane znaczniki pominięcia intro/outro do zewnętrznego odtwarzacza w celu automatycznego pomijania. Działa tylko w odtwarzaczach, które to obsługują; inne je ignorują.</string>
+
+    <!-- Playback network -->
+    <string name="playback_net_device_memory_info">Pamięć urządzenia: %1$s | Zalecany bezpieczny limit: %2$d MB</string>
+    <string name="playback_net_http2">Włącz HTTP/2</string>
+    <string name="playback_net_http2_sub">Włącz protokół HTTP/2 dla połączeń sieciowych, umożliwiając multipleksowanie żądań i szybsze uzgadnianie.</string>
+    <string name="playback_net_nuvio_performance_mode">Pamięć natywna ExoPlayer</string>
+    <string name="playback_net_nuvio_performance_mode_not_supported">Ta funkcja nie jest obsługiwana przez Twoje urządzenie.</string>
+    <string name="playback_net_nuvio_performance_mode_sub">Włącz natywny alokator pamięci poza stertą i optymalizacje przewijania.</string>
+
+    <!-- Player report issue -->
+    <string name="player_report_issue">Zgłoś problem</string>
+    <string name="player_report_issue_sending">Wysyłanie raportu odtwarzania...</string>
+    <string name="player_report_issue_sending_button">Wysyłanie...</string>
+    <string name="player_report_issue_sent">Raport wysłany: %1$s</string>
+    <string name="player_report_issue_sent_button">Raport wysłany</string>
+    <string name="player_report_issue_failed">Nie udało się wysłać raportu</string>
+    <string name="player_report_loading_issue">Zgłoś problem z ładowaniem</string>
+    <plurals name="player_report_loading_issue_prompt">
+        <item quantity="one">Wciąż ładuje po %1$d sekundzie</item>
+        <item quantity="few">Wciąż ładuje po %1$d sekundach</item>
+        <item quantity="many">Wciąż ładuje po %1$d sekundach</item>
+        <item quantity="other">Wciąż ładuje po %1$d sekundach</item>
+    </plurals>
+
+    <!-- Sentry -->
+    <string name="sentry_disable_dialog_title">Wyłączyć raporty awarii?</string>
+    <string name="sentry_disable_dialog_subtitle">Przyszłe awarie i bieżące ANR z tego urządzenia nie będą zgłaszane. Może to znacznie utrudnić naprawę błędów specyficznych dla urządzenia.</string>
+    <string name="sentry_enable_dialog_title">Włączyć raporty awarii?</string>
+    <string name="sentry_enable_dialog_subtitle">Raporty awarii pomagają identyfikować problemy specyficzne dla urządzenia bez konieczności reprodukcji błędu z logami ADB.</string>
+    <string name="sentry_help_title">Jak to pomaga</string>
+    <string name="sentry_help_body">Raporty są grupowane według wersji aplikacji, modelu urządzenia, wersji Androida i śladu stosu, aby najczęstsze rzeczywiste awarie mogły być naprawione w pierwszej kolejności.</string>
+    <string name="sentry_keep_enabled">Zostaw włączone</string>
+    <string name="sentry_not_sent_title">Nie wysyłane</string>
+    <string name="sentry_not_sent_body">Hasła, tokeny dostępu, tokeny odświeżania, treści żądań, treści odpowiedzi, nagłówki, ciasteczka, zrzuty ekranu, hierarchia widoków, powtórka sesji, surowa diagnostyka oraz wartości zapytań i fragmentów URL strumieni.</string>
+    <string name="sentry_sent_title">Wysyłane</string>
+    <string name="sentry_sent_body">Awarie, bieżące ANR, ślady stosu, wersja aplikacji, typ kompilacji, wariant, metadane urządzenia i systemu, oraz bezpieczne śladowe informacje sieciowe z metodą, hostem, ścieżką, statusem, czasem trwania i typem wyjątku.</string>
+    <string name="sentry_turn_off">Wyłącz</string>
+    <string name="sentry_turn_on">Włącz</string>
+
+    <!-- Card depth settings -->
+    <string name="settings_card_depth_title">Efekt głębi kart</string>
+    <string name="settings_card_depth_description">Dodaje podświetloną górną krawędź i delikatny połysk do kart graficznych, tworząc subtelne wrażenie głębi.</string>
+    <string name="settings_card_depth_enabled">Włącz efekt głębi</string>
+    <string name="settings_card_depth_edge">Poświata krawędzi</string>
+    <string name="settings_card_depth_edge_subtle">Subtelna</string>
+    <string name="settings_card_depth_edge_balanced">Zrównoważona</string>
+    <string name="settings_card_depth_edge_bold">Wyraźna</string>
+    <string name="settings_card_depth_edge_coverage">Pokrycie krawędzi</string>
+    <string name="settings_card_depth_edge_value">Poświata krawędzi</string>
+    <string name="settings_card_depth_sheen">Górny połysk</string>
+    <string name="settings_card_depth_sheen_off">Wyłączony</string>
+    <string name="settings_card_depth_sheen_soft">Delikatny</string>
+    <string name="settings_card_depth_sheen_bright">Jasny</string>
+    <string name="settings_card_depth_sheen_value">Połysk</string>
+    <string name="settings_card_depth_coverage_top">Tylko góra</string>
+    <string name="settings_card_depth_coverage_half">Połowa</string>
+    <string name="settings_card_depth_coverage_full">Pełny obrys</string>
+    <string name="settings_card_depth_coverage_value">Pokrycie krawędzi</string>
+    <string name="settings_card_depth_fine_tune">Dostrojenie</string>
+    <string name="settings_card_depth_fine_tune_title">Dostrojenie głębi</string>
+    <string name="settings_card_depth_fine_tune_hint_tv">Użyj lewo i prawo na pilocie, aby regulować każdą wartość.</string>
+    <string name="settings_card_depth_apply_to">Zastosuj do</string>
+    <string name="settings_card_depth_surface_posters">Plakaty</string>
+    <string name="settings_card_depth_surface_episodes">Karty odcinków</string>
+    <string name="settings_card_depth_surface_cast">Obsada</string>
+    <string name="settings_card_depth_surface_continue_watching">Kontynuuj oglądanie</string>
+    <string name="settings_card_depth_surface_trailers">Zwiastuny</string>
+
+    <!-- Stream test -->
+    <string name="stream_test_section_header">Diagnostyka przepustowości strumienia</string>
+    <string name="stream_test_card_title">Uruchom test prędkości ostatniego strumienia</string>
+    <string name="stream_test_btn_start">Rozpocznij test</string>
+    <string name="stream_test_btn_running">Trwa test...</string>
+    <string name="stream_test_btn_run_again">Uruchom ponownie</string>
+    <string name="stream_test_btn_measuring_baseline">Pomiar bazowy...</string>
+    <string name="stream_test_btn_measuring_parallel1">Pomiar równoległy (1 MB)...</string>
+    <string name="stream_test_btn_measuring_parallel4">Pomiar równoległy (4 MB)...</string>
+    <string name="stream_test_btn_measuring_parallel8">Pomiar równoległy (8 MB)...</string>
+    <string name="stream_test_btn_measuring_parallel16">Pomiar równoległy (16 MB)...</string>
+    <string name="stream_test_label_baseline">Standardowe pojedyncze połączenie (bazowe)</string>
+    <string name="stream_test_label_parallel1">Połączenie równoległe (fragmenty 1 MB)</string>
+    <string name="stream_test_label_parallel4">Połączenie równoległe (fragmenty 4 MB)</string>
+    <string name="stream_test_label_parallel8">Połączenie równoległe (fragmenty 8 MB)</string>
+    <string name="stream_test_label_parallel16">Połączenie równoległe (fragmenty 16 MB)</string>
+    <string name="stream_test_no_stream">Brak nagranego odtwarzania. Odtwórz wideo, aby uruchomić testy diagnostyczne jego serwera.</string>
+    <string name="stream_test_error_connection">Połączenie nie powiodło się. Link do ostatniego strumienia mógł wygasnąć lub jest nieosiągalny. Odtwórz wideo ponownie i spróbuj jeszcze raz.</string>
+    <string name="stream_test_error_prefix">Błąd: %1$s</string>
+    <string name="stream_test_server_label">Serwer: %1$s</string>
+    <string name="stream_test_video_bitrate">Średni bitrate wideo: %1$s</string>
+
+    <!-- Supporters / donation progress -->
+    <string name="supporters_contributors_donation_progress_title">Serwer i utrzymanie w tym miesiącu</string>
+    <string name="supporters_contributors_donation_progress_complete">Pokryto. Dodatkowe wsparcie idzie teraz na rozwój.</string>
+    <string name="supporters_contributors_donation_progress_remaining">Po 100%, dodatkowe wsparcie idzie na rozwój.</string>
+    <string name="supporters_contributors_loading_donation_progress">Ładowanie postępu finansowania...</string>
+
+    <!-- Missing translations added -->
+    <string name="about_update_banner_title">Automatyczny baner aktualizacji</string>
+    <string name="about_update_banner_subtitle">Pokaż baner gdy dostępna jest nowa wersja</string>
+    <string name="action_back">Wstecz</string>
+    <string name="action_remove_anyway">Usuń mimo to</string>
+    <string name="cd_clear_search">Wyczyść wyszukiwanie</string>
+    <string name="cd_simkl_logo">Logo Simkl</string>
+    <string name="cd_simkl_qr">Kod QR aktywacji Simkl</string>
+    <string name="cloud_library_search_clear">Wyczyść wyszukiwanie</string>
+    <string name="cloud_library_search_label">Szukaj w bibliotece chmurowej</string>
+    <string name="error_open_browser_failed">Nie udało się otworzyć przeglądarki</string>
+    <string name="library_empty_simkl_not_auth_title">Simkl nie połączony</string>
+    <string name="library_empty_simkl_not_auth_subtitle">Połącz konto Simkl w Ustawieniach, aby zobaczyć bibliotekę Simkl</string>
+    <string name="library_empty_simkl_title">Brak %1$s w tym statusie</string>
+    <string name="library_empty_simkl_subtitle">Użyj + w szczegółach, aby dodać elementy do statusu Simkl</string>
+    <string name="library_sort_provider_order">Kolejność dostawcy</string>
+    <string name="licenses_attributions_simkl_title">Simkl</string>
+    <string name="licenses_attributions_simkl_body">Nuvio łączy się z Simkl w celu uwierzytelniania konta, list do obejrzenia, historii oglądania, postępu odtwarzania i scrobblowania. Dane śledzenia filmów, seriali i anime są dostarczane przez Simkl. Nuvio nie jest powiązane z Simkl ani przez niego wspierane.</string>
+    <string name="mdblist_mal_title">MyAnimeList</string>
+    <string name="mdblist_mal_subtitle">Pokaż ocenę MyAnimeList</string>
+    <string name="settings_tracking_title">Śledzenie</string>
+    <string name="settings_tracking_subtitle">Zarządzaj połączeniami Trakt i Simkl</string>
+    <string name="settings_tracking_description">Połącz dostawców śledzenia i wybierz, który zasila Twoją Bibliotekę i Kontynuuj oglądanie.</string>
+    <string name="simkl_account_title">Konto Simkl</string>
+    <string name="simkl_awaiting_instruction">Otwórz stronę weryfikacji Simkl i wpisz ten kod.</string>
+    <string name="simkl_code_expires">Kod wygasa za %1$s</string>
+    <string name="simkl_connect">Połącz Simkl</string>
+    <string name="simkl_connected_as">Połączono jako %1$s</string>
+    <string name="simkl_description">Połącz Simkl, aby synchronizować listy, historię oglądania, postęp odtwarzania i scrobble.</string>
+    <string name="simkl_disconnect">Rozłącz Simkl</string>
+    <string name="simkl_disconnect_title">Rozłączyć Simkl?</string>
+    <string name="simkl_disconnect_subtitle">Spowoduje to usunięcie konta Simkl i zbuforowanych danych Simkl z tego profilu.</string>
+    <string name="simkl_error_authorization_revoked">Autoryzacja Simkl została cofnięta. Połącz ponownie.</string>
+    <string name="simkl_error_code_expired">Kod Simkl wygasł. Zacznij od nowa.</string>
+    <string name="simkl_error_network">Nie można połączyć się z Simkl. Spróbuj ponownie.</string>
+    <string name="simkl_library_source_selected">Simkl wybrany dla Biblioteki</string>
+    <string name="simkl_missing_credentials">Brak SIMKL_CLIENT_ID</string>
+    <string name="simkl_name">Simkl</string>
+    <string name="simkl_status_connected">Połączono z Simkl</string>
+    <string name="simkl_status_disconnected">Rozłączono z Simkl</string>
+    <string name="simkl_status_enter_code">Wpisz kod na Simkl, aby zakończyć łączenie</string>
+    <string name="simkl_status_synced">Synchronizacja Simkl zakończona</string>
+    <string name="simkl_status_syncing">Synchronizacja Simkl…</string>
+    <string name="simkl_status_waiting">Oczekiwanie na zatwierdzenie Simkl…</string>
+    <string name="simkl_sync_info_action">Jak działa synchronizacja</string>
+    <string name="simkl_sync_info_activity">Każde odświeżanie najpierw sprawdza, czy Simkl zgłasza zmiany i pobiera tylko aktualizacje. Działa to zgodnie z regułami API Simkl, zmniejsza niepotrzebne zużycie danych i pomaga utrzymać stabilność usługi.</string>
+    <string name="simkl_sync_info_description">Nuvio automatycznie sprawdza Simkl co najwyżej raz na %1$d minut. Zmiany dokonane w innej aplikacji lub na stronie Simkl mogą pojawić się z takim opóźnieniem.</string>
+    <string name="simkl_sync_info_docs">Przeczytaj przewodnik synchronizacji Simkl</string>
+    <string name="simkl_sync_info_library_statuses">Seriale umieszczone na listach Wstrzymane lub Porzucone w Simkl są ukrywane z Kontynuuj oglądanie. Pozostają ukryte tak długo, jak znajdują się na którejś z tych list.</string>
+    <string name="simkl_sync_info_manual">Zmiany dokonane w Nuvio są wysyłane do Simkl natychmiast. Użyj Synchronizuj teraz, gdy chcesz, aby Nuvio sprawdziło zdalne zmiany wcześniej.</string>
+    <string name="simkl_sync_info_title">Jak działa synchronizacja Simkl</string>
+    <string name="simkl_sync_now">Synchronizuj teraz</string>
+    <string name="simkl_user_fallback">Użytkownik Simkl</string>
+    <string name="simkl_visit">Odwiedź Simkl</string>
+    <string name="simkl_watch_progress_selected">Simkl wybrany dla Kontynuuj oglądanie</string>
+    <string name="tracking_accounts_title">Konta</string>
+    <string name="tracking_accounts_subtitle">Połącz i zarządzaj usługami śledzenia</string>
+    <string name="tracking_connecting_provider">Rozpoczynanie połączenia z %1$s…</string>
+    <string name="tracking_finish_connection">Zakończ zatwierdzanie połączenia</string>
+    <string name="tracking_library_source_dialog_subtitle">Wybierz usługę, z której Nuvio czyta Bibliotekę. Scrobblowanie odtwarzania działa dla każdej połączonej usługi.</string>
+    <string name="tracking_removal_impact_history">historia oglądania</string>
+    <string name="tracking_removal_impact_history_rating">historia oglądania i ocena</string>
+    <string name="tracking_removal_impact_rating">ocena</string>
+    <string name="tracking_removal_message">Uswając \"%1$s\" z %2$s, \"%3$s\" także zostanie wyczyszczona. Tego nie można cofnąć.</string>
+    <string name="tracking_removal_title">Usunąć z %1$s?</string>
+    <string name="tracking_simkl_anime_id_imdb">Preferuj IMDB</string>
+    <string name="tracking_simkl_anime_id_kitsu">Preferuj Kitsu</string>
+    <string name="tracking_simkl_anime_id_mal">Preferuj MyAnimeList</string>
+    <string name="tracking_simkl_anime_id_title">Preferencja ID anime</string>
+    <string name="tracking_simkl_anime_id_subtitle">Kontroluje sposób identyfikacji anime. Wybór MAL lub Kitsu daje każdemu sezonowi osobny wpis zamiast grupowania pod jednym ID IMDB.</string>
+    <string name="tracking_simkl_features_title">Funkcje Simkl</string>
+    <string name="tracking_simkl_features_subtitle">Ustawienia specyficzne dla Simkl</string>
+    <string name="tracking_sources_title">Źródła</string>
+    <string name="tracking_sources_subtitle">Wybierz skąd Nuvio czyta bibliotekę i postęp oglądania. Scrobblowanie odtwarzania działa dla każdej połączonej usługi.</string>
+    <string name="tracking_status_connected">Połączono</string>
+    <string name="tracking_status_connecting">Łączenie</string>
+    <string name="tracking_status_disconnected">Nie połączono</string>
+    <string name="tracking_status_waiting">Oczekiwanie na zatwierdzenie</string>
+    <string name="tracking_trakt_features_title">Funkcje Trakt</string>
+    <string name="tracking_trakt_features_subtitle">Historia, recenzje i rekomendacje specyficzne dla Trakt</string>
+    <string name="tracking_trakt_progress_required">Dostępne gdy Trakt jest źródłem postępu oglądania</string>
+    <string name="tracking_watch_progress_dialog_subtitle">Wybierz usługę, z której Nuvio czyta wznawianie i Kontynuuj oglądanie. Scrobblowanie pozostaje aktywne dla każdej połączonej usługi.</string>
+    <string name="trakt_name">Trakt</string>
+    <string name="update_available">Dostępna aktualizacja</string>
+    <string name="update_downloading_progress">Pobieranie %1$d%%</string>
+    <string name="update_latest_version">Używasz najnowszej wersji.</string>
+    <string name="update_no_release_notes">Nie podano informacji o wydaniu.</string>
+    <string name="update_preparing_download">Przygotowywanie pobierania</string>
+    <string name="update_release_notes">Informacje o wydaniu</string>
 </resources>

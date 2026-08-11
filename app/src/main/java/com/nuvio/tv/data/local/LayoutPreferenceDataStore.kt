@@ -1,10 +1,12 @@
 package com.nuvio.tv.data.local
 
+import android.util.Log
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import com.nuvio.tv.core.profile.ProfileManager
@@ -14,8 +16,14 @@ import com.nuvio.tv.core.sync.buildHomeCatalogSyncPayload
 import com.nuvio.tv.core.sync.homeCatalogKey
 import com.nuvio.tv.core.sync.homeCollectionKey
 import com.nuvio.tv.domain.model.Addon
+import com.nuvio.tv.domain.model.CardDepthStyle
+import com.nuvio.tv.domain.model.CardDepthSurface
 import com.nuvio.tv.domain.model.Collection
+import com.nuvio.tv.domain.model.ContinueWatchingCardStyle
 import com.nuvio.tv.domain.model.ContinueWatchingSortMode
+import com.nuvio.tv.domain.model.DEFAULT_CARD_DEPTH_EDGE_COVERAGE
+import com.nuvio.tv.domain.model.DEFAULT_CARD_DEPTH_EDGE_STRENGTH
+import com.nuvio.tv.domain.model.DEFAULT_CARD_DEPTH_SHEEN_STRENGTH
 import com.nuvio.tv.domain.model.DiscoverLocation
 import com.nuvio.tv.domain.model.FocusedPosterTrailerPlaybackTarget
 import com.nuvio.tv.domain.model.HomeLayout
@@ -32,6 +40,7 @@ class LayoutPreferenceDataStore @Inject constructor(
     private val profileManager: ProfileManager
 ) {
     companion object {
+        private const val TAG = "LayoutPreferenceDS"
         private const val FEATURE = "layout_settings"
         private const val DEFAULT_POSTER_CARD_WIDTH_DP = 126
         private const val DEFAULT_POSTER_CARD_HEIGHT_DP = 189
@@ -71,8 +80,18 @@ class LayoutPreferenceDataStore @Inject constructor(
     private val posterCardWidthDpKey = intPreferencesKey("poster_card_width_dp")
     private val posterCardHeightDpKey = intPreferencesKey("poster_card_height_dp")
     private val posterCardCornerRadiusDpKey = intPreferencesKey("poster_card_corner_radius_dp")
+    private val cardDepthEnabledKey = booleanPreferencesKey("card_depth_enabled")
+    private val cardDepthEdgeStrengthKey = intPreferencesKey("card_depth_edge_strength")
+    private val cardDepthSheenStrengthKey = intPreferencesKey("card_depth_sheen_strength")
+    private val cardDepthEdgeCoverageKey = intPreferencesKey("card_depth_edge_coverage")
+    private val cardDepthPostersEnabledKey = booleanPreferencesKey("card_depth_posters_enabled")
+    private val cardDepthContinueWatchingEnabledKey = booleanPreferencesKey("card_depth_continue_watching_enabled")
+    private val cardDepthEpisodeCardsEnabledKey = booleanPreferencesKey("card_depth_episode_cards_enabled")
+    private val cardDepthCastEnabledKey = booleanPreferencesKey("card_depth_cast_enabled")
+    private val cardDepthTrailersEnabledKey = booleanPreferencesKey("card_depth_trailers_enabled")
     private val blurUnwatchedEpisodesKey = booleanPreferencesKey("blur_unwatched_episodes")
     private val useEpisodeThumbnailsInCwKey = booleanPreferencesKey("use_episode_thumbnails_in_cw")
+    private val continueWatchingCardStyleKey = stringPreferencesKey("continue_watching_card_style")
     private val showUnairedNextUpKey = booleanPreferencesKey("show_unaired_next_up")
     private val nextUpFromFurthestEpisodeKey = booleanPreferencesKey("next_up_from_furthest_episode")
     private val blurContinueWatchingNextUpKey = booleanPreferencesKey("blur_continue_watching_next_up")
@@ -95,6 +114,22 @@ class LayoutPreferenceDataStore @Inject constructor(
             factory.get(pid, FEATURE).data.map { prefs -> extract(prefs) }
         }
 
+    private fun Preferences.getStringOrMigrateSet(key: Preferences.Key<String>): String? {
+        return try {
+            this[key]
+        } catch (e: ClassCastException) {
+            val setKey = stringSetPreferencesKey(key.name)
+            val legacySet = try { this[setKey] } catch (_: Exception) { null }
+            if (legacySet != null) {
+                Log.w(TAG, "Key '${key.name}' stored as Set instead of String (${legacySet.size} items), converting")
+                gson.toJson(legacySet.toList())
+            } else {
+                Log.e(TAG, "ClassCastException for key '${key.name}' but no Set value found", e)
+                null
+            }
+        }
+    }
+
     private fun positiveOrDefault(value: Int?, defaultValue: Int): Int =
         value?.takeIf { it > 0 } ?: defaultValue
 
@@ -107,16 +142,25 @@ class LayoutPreferenceDataStore @Inject constructor(
         }
     }
 
+    val continueWatchingCardStyle: Flow<ContinueWatchingCardStyle> = profileFlow { prefs ->
+        val styleName = prefs[continueWatchingCardStyleKey] ?: ContinueWatchingCardStyle.CARD.name
+        try {
+            ContinueWatchingCardStyle.valueOf(styleName)
+        } catch (e: IllegalArgumentException) {
+            ContinueWatchingCardStyle.CARD
+        }
+    }
+
     val hasChosenLayout: Flow<Boolean> = profileFlow { prefs ->
         prefs[hasChosenKey] ?: false
     }
 
     val heroCatalogSelections: Flow<List<String>> = profileFlow { prefs ->
-        val multiSelection = parseCatalogKeys(prefs[heroCatalogKeysKey])
+        val multiSelection = parseCatalogKeys(prefs.getStringOrMigrateSet(heroCatalogKeysKey))
         if (multiSelection.isNotEmpty()) {
             multiSelection
         } else {
-            prefs[heroCatalogKey]
+            prefs.getStringOrMigrateSet(heroCatalogKey)
                 ?.trim()
                 ?.takeIf { it.isNotEmpty() }
                 ?.let(::listOf)
@@ -133,7 +177,7 @@ class LayoutPreferenceDataStore @Inject constructor(
         val usePrimary = profile != null && !profile.isPrimary && profile.usesPrimaryAddons
         val effectivePid = if (usePrimary) 1 else pid
         factory.get(effectivePid, FEATURE).data.map { prefs ->
-            parseCatalogKeys(prefs[homeCatalogOrderKeysKey])
+            parseCatalogKeys(prefs.getStringOrMigrateSet(homeCatalogOrderKeysKey))
         }
     }
 
@@ -142,7 +186,7 @@ class LayoutPreferenceDataStore @Inject constructor(
         val usePrimary = profile != null && !profile.isPrimary && profile.usesPrimaryAddons
         val effectivePid = if (usePrimary) 1 else pid
         factory.get(effectivePid, FEATURE).data.map { prefs ->
-            parseCatalogKeys(prefs[disabledHomeCatalogKeysKey])
+            parseCatalogKeys(prefs.getStringOrMigrateSet(disabledHomeCatalogKeysKey))
         }
     }
 
@@ -151,7 +195,7 @@ class LayoutPreferenceDataStore @Inject constructor(
         val usePrimary = profile != null && !profile.isPrimary && profile.usesPrimaryAddons
         val effectivePid = if (usePrimary) 1 else pid
         factory.get(effectivePid, FEATURE).data.map { prefs ->
-            parseCustomTitles(prefs[customCatalogTitlesKey])
+            parseCustomTitles(prefs.getStringOrMigrateSet(customCatalogTitlesKey))
         }
     }
 
@@ -253,6 +297,23 @@ class LayoutPreferenceDataStore @Inject constructor(
 
     val posterCardCornerRadiusDp: Flow<Int> = profileFlow { prefs ->
         prefs[posterCardCornerRadiusDpKey] ?: DEFAULT_POSTER_CARD_CORNER_RADIUS_DP
+    }
+
+    val cardDepthStyle: Flow<CardDepthStyle> = profileFlow { prefs ->
+        CardDepthStyle(
+            enabled = prefs[cardDepthEnabledKey] ?: false,
+            edgeStrength = (prefs[cardDepthEdgeStrengthKey]
+                ?: DEFAULT_CARD_DEPTH_EDGE_STRENGTH).coerceIn(0, 100),
+            sheenStrength = (prefs[cardDepthSheenStrengthKey]
+                ?: DEFAULT_CARD_DEPTH_SHEEN_STRENGTH).coerceIn(0, 100),
+            edgeCoverage = (prefs[cardDepthEdgeCoverageKey]
+                ?: DEFAULT_CARD_DEPTH_EDGE_COVERAGE).coerceIn(0, 100),
+            postersEnabled = prefs[cardDepthPostersEnabledKey] ?: true,
+            continueWatchingEnabled = prefs[cardDepthContinueWatchingEnabledKey] ?: true,
+            episodeCardsEnabled = prefs[cardDepthEpisodeCardsEnabledKey] ?: true,
+            castEnabled = prefs[cardDepthCastEnabledKey] ?: true,
+            trailersEnabled = prefs[cardDepthTrailersEnabledKey] ?: true
+        )
     }
 
     val blurUnwatchedEpisodes: Flow<Boolean> = profileFlow { prefs ->
@@ -548,6 +609,57 @@ class LayoutPreferenceDataStore @Inject constructor(
         }
     }
 
+    suspend fun setCardDepthEnabled(enabled: Boolean) {
+        store().edit { prefs ->
+            prefs[cardDepthEnabledKey] = enabled
+        }
+    }
+
+    suspend fun setCardDepthEdgeStrength(strength: Int) {
+        store().edit { prefs ->
+            prefs[cardDepthEdgeStrengthKey] = strength.coerceIn(0, 100)
+        }
+    }
+
+    suspend fun setCardDepthSheenStrength(strength: Int) {
+        store().edit { prefs ->
+            prefs[cardDepthSheenStrengthKey] = strength.coerceIn(0, 100)
+        }
+    }
+
+    suspend fun setCardDepthEdgeCoverage(coverage: Int) {
+        store().edit { prefs ->
+            prefs[cardDepthEdgeCoverageKey] = coverage.coerceIn(0, 100)
+        }
+    }
+
+    suspend fun setCardDepthSurfaceEnabled(surface: CardDepthSurface, enabled: Boolean) {
+        store().edit { prefs ->
+            val key = when (surface) {
+                CardDepthSurface.POSTERS -> cardDepthPostersEnabledKey
+                CardDepthSurface.CONTINUE_WATCHING -> cardDepthContinueWatchingEnabledKey
+                CardDepthSurface.EPISODE_CARDS -> cardDepthEpisodeCardsEnabledKey
+                CardDepthSurface.CAST -> cardDepthCastEnabledKey
+                CardDepthSurface.TRAILERS -> cardDepthTrailersEnabledKey
+            }
+            prefs[key] = enabled
+        }
+    }
+
+    suspend fun resetCardDepthStyle() {
+        store().edit { prefs ->
+            prefs.remove(cardDepthEnabledKey)
+            prefs.remove(cardDepthEdgeStrengthKey)
+            prefs.remove(cardDepthSheenStrengthKey)
+            prefs.remove(cardDepthEdgeCoverageKey)
+            prefs.remove(cardDepthPostersEnabledKey)
+            prefs.remove(cardDepthContinueWatchingEnabledKey)
+            prefs.remove(cardDepthEpisodeCardsEnabledKey)
+            prefs.remove(cardDepthCastEnabledKey)
+            prefs.remove(cardDepthTrailersEnabledKey)
+        }
+    }
+
     suspend fun setBlurUnwatchedEpisodes(enabled: Boolean) {
         store().edit { prefs ->
             prefs[blurUnwatchedEpisodesKey] = enabled
@@ -557,6 +669,12 @@ class LayoutPreferenceDataStore @Inject constructor(
     suspend fun setUseEpisodeThumbnailsInCw(enabled: Boolean) {
         store().edit { prefs ->
             prefs[useEpisodeThumbnailsInCwKey] = enabled
+        }
+    }
+
+    suspend fun setContinueWatchingCardStyle(style: ContinueWatchingCardStyle) {
+        store().edit { prefs ->
+            prefs[continueWatchingCardStyleKey] = style.name
         }
     }
 
@@ -713,9 +831,9 @@ class LayoutPreferenceDataStore @Inject constructor(
 
     private fun readHomeCatalogSettingsState(prefs: Preferences): LocalHomeCatalogSettingsState {
         return LocalHomeCatalogSettingsState(
-            orderKeys = parseCatalogKeys(prefs[homeCatalogOrderKeysKey]),
-            disabledKeys = parseCatalogKeys(prefs[disabledHomeCatalogKeysKey]).toSet(),
-            customTitles = parseCustomTitles(prefs[customCatalogTitlesKey]),
+            orderKeys = parseCatalogKeys(prefs.getStringOrMigrateSet(homeCatalogOrderKeysKey)),
+            disabledKeys = parseCatalogKeys(prefs.getStringOrMigrateSet(disabledHomeCatalogKeysKey)).toSet(),
+            customTitles = parseCustomTitles(prefs.getStringOrMigrateSet(customCatalogTitlesKey)),
             hideUnreleasedContent = prefs[hideUnreleasedContentKey] ?: false
         )
     }
