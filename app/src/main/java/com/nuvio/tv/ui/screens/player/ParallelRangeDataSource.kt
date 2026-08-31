@@ -103,14 +103,16 @@ internal class ParallelRangeDataSource(
             bytesServedThisOpen: Long,
             earnedPrefetchBytes: Long,
             currentChunkComplete: Boolean,
-            nextChunkComplete: Boolean,
             configuredDepth: Int,
             rateLimitDepth: Int
         ): Int {
             if (bytesServedThisOpen < earnedPrefetchBytes) return 1
-            if (!currentChunkComplete || !nextChunkComplete) {
+            if (!currentChunkComplete) {
                 return 2.coerceAtMost(configuredDepth).coerceAtMost(rateLimitDepth).coerceAtLeast(1)
             }
+            // The current chunk is already local, so fanning out cannot starve playback of it.
+            // Waiting for the next chunk too creates a catch-22 on slow single connections: the
+            // reader consumes that chunk before it finishes, and "parallel" mode stays serial.
             return configuredDepth.coerceAtMost(rateLimitDepth).coerceAtLeast(1)
         }
 
@@ -810,7 +812,6 @@ internal class ParallelRangeDataSource(
             bytesServedThisOpen = bytesServedThisOpen,
             earnedPrefetchBytes = EARNED_PREFETCH_BYTES,
             currentChunkComplete = chunkComplete(currentChunkIdx),
-            nextChunkComplete = chunkComplete(currentChunkIdx + 1),
             configuredDepth = configuredDepth,
             rateLimitDepth = session?.currentAllowedDepth(configuredDepth) ?: configuredDepth
         )
