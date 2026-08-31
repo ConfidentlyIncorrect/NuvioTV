@@ -1216,11 +1216,9 @@
 
     <!-- AuthQrSignInScreen -->
 <string name="auth_qr_title">Accedi con QR Code</string>
-<string name="auth_qr_account_login">Accesso Account</string>
 <string name="auth_qr_finishing">Completamento accesso\u2026</string>
 <string name="auth_qr_code_label">Codice: %1$s</string>
 <string name="auth_qr_expires">Scade in %1$s</string>
-<string name="auth_qr_phone_hint">Usa il telefono per accedere con email e password. Il login sulla TV rimane solo con il QR Code per un accesso più rapido.</string>
 <string name="auth_qr_scan_instruction">Scansiona il QR Code, approva sul browser e poi ritorna qui.</string>
 <string name="auth_qr_code_display">Codice: %1$s</string>
 <string name="auth_qr_refresh">Aggiorna QR</string>
@@ -2235,7 +2233,6 @@
   <string name="audio_number_of_channels">Numero di canali</string>
   <string name="audio_number_of_channels_desc">Imposta il layout degli altoparlanti utilizzato per il downmix di FFmpeg.</string>
   <string name="audio_enable_downmix_title">Abilita downmix</string>
-  <string name="audio_enable_downmix_subtitle">Utilizza il percorso di downmix FFmpeg. Se disabilitato, l\'audio segue il percorso predefinito di Android o del dispositivo.</string>
   <string name="autoplay_reuse_binge_group">Riutilizza gruppo Binge Watch</string>
   <string name="autoplay_reuse_binge_group_sub">Ricorda e riutilizza l\'ultimo gruppo di visione continua tra le varie sessioni (Continua a guardare, Dettagli, ecc.).</string>
   <string name="debrid_title">Servizi collegati</string>

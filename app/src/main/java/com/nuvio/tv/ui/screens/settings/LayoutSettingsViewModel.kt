@@ -20,8 +20,11 @@ import com.nuvio.tv.domain.model.CardDepthSurface
 import com.nuvio.tv.domain.model.ContinueWatchingCardStyle
 import com.nuvio.tv.domain.model.ContinueWatchingSortMode
 import com.nuvio.tv.domain.model.DiscoverLocation
+import com.nuvio.tv.domain.model.DetailImdbRatingsVisibility
+import com.nuvio.tv.domain.model.EpisodeOptionsOverlayStyle
 import com.nuvio.tv.domain.model.FocusedPosterTrailerPlaybackTarget
 import com.nuvio.tv.domain.model.HomeLayout
+import com.nuvio.tv.domain.model.HomeImdbRatingsVisibility
 import com.nuvio.tv.domain.model.enabledAddons
 import com.nuvio.tv.domain.repository.AddonRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -63,6 +66,9 @@ data class LayoutSettingsUiState(
     val posterCardCornerRadiusDp: Int = 12,
     val cardDepthStyle: CardDepthStyle = CardDepthStyle(),
     val blurUnwatchedEpisodes: Boolean = false,
+    val episodeOptionsOverlayStyle: EpisodeOptionsOverlayStyle = EpisodeOptionsOverlayStyle.ARTWORK,
+    val homeImdbRatingsVisibility: HomeImdbRatingsVisibility = HomeImdbRatingsVisibility.SHOW_ALL,
+    val detailImdbRatingsVisibility: DetailImdbRatingsVisibility = DetailImdbRatingsVisibility.SHOW_ALL,
     val blurContinueWatchingNextUp: Boolean = false,
     val useEpisodeThumbnailsInCw: Boolean = true,
     val detailPageTrailerButtonEnabled: Boolean = true,
@@ -75,6 +81,7 @@ data class LayoutSettingsUiState(
     val showFullReleaseDate: Boolean = true,
     val nextUpFromFurthestEpisode: Boolean = true,
     val showUnairedNextUp: Boolean = true,
+    val continueWatchingEnabled: Boolean = true,
     val continueWatchingSortMode: ContinueWatchingSortMode = ContinueWatchingSortMode.DEFAULT,
     val continueWatchingCardStyle: ContinueWatchingCardStyle = ContinueWatchingCardStyle.CARD,
 )
@@ -117,6 +124,9 @@ sealed class LayoutSettingsEvent {
         val enabled: Boolean
     ) : LayoutSettingsEvent()
     data class SetBlurUnwatchedEpisodes(val enabled: Boolean) : LayoutSettingsEvent()
+    data class SetEpisodeOptionsOverlayStyle(val style: EpisodeOptionsOverlayStyle) : LayoutSettingsEvent()
+    data class SetHomeImdbRatingsVisibility(val visibility: HomeImdbRatingsVisibility) : LayoutSettingsEvent()
+    data class SetDetailImdbRatingsVisibility(val visibility: DetailImdbRatingsVisibility) : LayoutSettingsEvent()
     data class SetBlurContinueWatchingNextUp(val enabled: Boolean) : LayoutSettingsEvent()
     data class SetUseEpisodeThumbnailsInCw(val enabled: Boolean) : LayoutSettingsEvent()
     data class SetDetailPageTrailerButtonEnabled(val enabled: Boolean) : LayoutSettingsEvent()
@@ -129,6 +139,7 @@ sealed class LayoutSettingsEvent {
     data class SetShowFullReleaseDate(val enabled: Boolean) : LayoutSettingsEvent()
     data class SetNextUpFromFurthestEpisode(val enabled: Boolean) : LayoutSettingsEvent()
     data class SetShowUnairedNextUp(val enabled: Boolean) : LayoutSettingsEvent()
+    data class SetContinueWatchingEnabled(val enabled: Boolean) : LayoutSettingsEvent()
     data class SetContinueWatchingSortMode(val mode: ContinueWatchingSortMode) : LayoutSettingsEvent()
     data class SetContinueWatchingCardStyle(val style: ContinueWatchingCardStyle) : LayoutSettingsEvent()
     data object ResetPosterCardStyle : LayoutSettingsEvent()
@@ -296,6 +307,21 @@ class LayoutSettingsViewModel @Inject constructor(
             }
         }
         viewModelScope.launch {
+            layoutPreferenceDataStore.episodeOptionsOverlayStyle.distinctUntilChanged().collectLatest { style ->
+                updateUiStateIfChanged { it.copy(episodeOptionsOverlayStyle = style) }
+            }
+        }
+        viewModelScope.launch {
+            layoutPreferenceDataStore.homeImdbRatingsVisibility.distinctUntilChanged().collectLatest { visibility ->
+                updateUiStateIfChanged { it.copy(homeImdbRatingsVisibility = visibility) }
+            }
+        }
+        viewModelScope.launch {
+            layoutPreferenceDataStore.detailImdbRatingsVisibility.distinctUntilChanged().collectLatest { visibility ->
+                updateUiStateIfChanged { it.copy(detailImdbRatingsVisibility = visibility) }
+            }
+        }
+        viewModelScope.launch {
             layoutPreferenceDataStore.blurContinueWatchingNextUp.distinctUntilChanged().collectLatest { enabled ->
                 updateUiStateIfChanged { it.copy(blurContinueWatchingNextUp = enabled) }
             }
@@ -321,7 +347,7 @@ class LayoutSettingsViewModel @Inject constructor(
             }
         }
         viewModelScope.launch {
-            layoutPreferenceDataStore.preferExternalMetaAddonDetail.distinctUntilChanged().collectLatest { enabled ->
+            layoutPreferenceDataStore.preferExternalMetaAddonDetail.collectLatest { enabled ->
                 updateUiStateIfChanged { it.copy(preferExternalMetaAddonDetail = enabled) }
             }
         }
@@ -346,7 +372,7 @@ class LayoutSettingsViewModel @Inject constructor(
             }
         }
         viewModelScope.launch {
-            layoutPreferenceDataStore.nextUpFromFurthestEpisode.distinctUntilChanged().collectLatest { enabled ->
+            layoutPreferenceDataStore.nextUpFromFurthestEpisode.collectLatest { enabled ->
                 updateUiStateIfChanged { it.copy(nextUpFromFurthestEpisode = enabled) }
             }
         }
@@ -354,6 +380,13 @@ class LayoutSettingsViewModel @Inject constructor(
             layoutPreferenceDataStore.showUnairedNextUp.distinctUntilChanged().collectLatest { enabled ->
                 updateUiStateIfChanged { it.copy(showUnairedNextUp = enabled) }
             }
+        }
+        viewModelScope.launch {
+            layoutPreferenceDataStore.continueWatchingEnabled
+                .distinctUntilChanged()
+                .collect { enabled ->
+                    updateUiStateIfChanged { it.copy(continueWatchingEnabled = enabled) }
+                }
         }
         viewModelScope.launch {
             layoutPreferenceDataStore.continueWatchingSortMode
@@ -402,6 +435,9 @@ class LayoutSettingsViewModel @Inject constructor(
             is LayoutSettingsEvent.SetCardDepthSurfaceEnabled ->
                 setCardDepthSurfaceEnabled(event.surface, event.enabled)
             is LayoutSettingsEvent.SetBlurUnwatchedEpisodes -> setBlurUnwatchedEpisodes(event.enabled)
+            is LayoutSettingsEvent.SetEpisodeOptionsOverlayStyle -> setEpisodeOptionsOverlayStyle(event.style)
+            is LayoutSettingsEvent.SetHomeImdbRatingsVisibility -> setHomeImdbRatingsVisibility(event.visibility)
+            is LayoutSettingsEvent.SetDetailImdbRatingsVisibility -> setDetailImdbRatingsVisibility(event.visibility)
             is LayoutSettingsEvent.SetBlurContinueWatchingNextUp -> setBlurContinueWatchingNextUp(event.enabled)
             is LayoutSettingsEvent.SetUseEpisodeThumbnailsInCw -> setUseEpisodeThumbnailsInCw(event.enabled)
             is LayoutSettingsEvent.SetDetailPageTrailerButtonEnabled -> setDetailPageTrailerButtonEnabled(event.enabled)
@@ -414,6 +450,7 @@ class LayoutSettingsViewModel @Inject constructor(
             is LayoutSettingsEvent.SetShowFullReleaseDate -> setShowFullReleaseDate(event.enabled)
             is LayoutSettingsEvent.SetNextUpFromFurthestEpisode -> setNextUpFromFurthestEpisode(event.enabled)
             is LayoutSettingsEvent.SetShowUnairedNextUp -> setShowUnairedNextUp(event.enabled)
+            is LayoutSettingsEvent.SetContinueWatchingEnabled -> setContinueWatchingEnabled(event.enabled)
             is LayoutSettingsEvent.SetContinueWatchingSortMode -> setContinueWatchingSortMode(event.mode)
             is LayoutSettingsEvent.SetContinueWatchingCardStyle -> setContinueWatchingCardStyle(event.style)
             LayoutSettingsEvent.ResetPosterCardStyle -> resetPosterCardStyle()
@@ -698,6 +735,27 @@ class LayoutSettingsViewModel @Inject constructor(
         }
     }
 
+    private fun setEpisodeOptionsOverlayStyle(style: EpisodeOptionsOverlayStyle) {
+        if (_uiState.value.episodeOptionsOverlayStyle == style) return
+        viewModelScope.launch {
+            layoutPreferenceDataStore.setEpisodeOptionsOverlayStyle(style)
+        }
+    }
+
+    private fun setHomeImdbRatingsVisibility(visibility: HomeImdbRatingsVisibility) {
+        if (_uiState.value.homeImdbRatingsVisibility == visibility) return
+        viewModelScope.launch {
+            layoutPreferenceDataStore.setHomeImdbRatingsVisibility(visibility)
+        }
+    }
+
+    private fun setDetailImdbRatingsVisibility(visibility: DetailImdbRatingsVisibility) {
+        if (_uiState.value.detailImdbRatingsVisibility == visibility) return
+        viewModelScope.launch {
+            layoutPreferenceDataStore.setDetailImdbRatingsVisibility(visibility)
+        }
+    }
+
     private fun setBlurContinueWatchingNextUp(enabled: Boolean) {
         if (_uiState.value.blurContinueWatchingNextUp == enabled) return
         viewModelScope.launch {
@@ -755,6 +813,13 @@ class LayoutSettingsViewModel @Inject constructor(
         if (_uiState.value.showUnairedNextUp == enabled) return
         viewModelScope.launch {
             layoutPreferenceDataStore.setShowUnairedNextUp(enabled)
+        }
+    }
+
+    private fun setContinueWatchingEnabled(enabled: Boolean) {
+        if (_uiState.value.continueWatchingEnabled == enabled) return
+        viewModelScope.launch {
+            layoutPreferenceDataStore.setContinueWatchingEnabled(enabled)
         }
     }
 

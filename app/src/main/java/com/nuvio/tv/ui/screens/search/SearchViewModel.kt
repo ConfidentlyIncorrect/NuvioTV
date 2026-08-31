@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nuvio.tv.R
 import com.nuvio.tv.core.network.NetworkResult
+import com.nuvio.tv.data.local.DiscoverSelectionDataStore
 import com.nuvio.tv.data.local.LayoutPreferenceDataStore
 import com.nuvio.tv.data.local.SearchHistoryDataStore
 import com.nuvio.tv.domain.model.Addon
@@ -31,6 +32,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -47,6 +49,8 @@ import javax.inject.Inject
 class SearchViewModel @Inject constructor(
     private val addonRepository: AddonRepository,
     private val catalogRepository: CatalogRepository,
+    private val metaRepository: com.nuvio.tv.domain.repository.MetaRepository,
+    private val discoverSelectionDataStore: DiscoverSelectionDataStore,
     private val layoutPreferenceDataStore: LayoutPreferenceDataStore,
     private val searchHistoryDataStore: SearchHistoryDataStore,
     private val watchProgressRepository: com.nuvio.tv.domain.repository.WatchProgressRepository,
@@ -187,10 +191,39 @@ class SearchViewModel @Inject constructor(
         viewModelScope.launch { loadDiscoverCatalogs() }
     }
 
+    private val metaPrefetchedIds: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+    private var metaPrefetchJob: Job? = null
+
+    /**
+     * Prefetch meta from addons in background when an item receives focus.
+     * Warms the MetaRepository cache so the detail screen loads instantly.
+     * Debounced to avoid flooding the network during rapid scrolling.
+     */
+    fun prefetchMetaOnFocus(id: String, type: String) {
+        if (id.isBlank() || id in metaPrefetchedIds) return
+        metaPrefetchJob?.cancel()
+        metaPrefetchJob = viewModelScope.launch {
+            delay(150)
+            if (id in metaPrefetchedIds) return@launch
+            metaPrefetchedIds.add(id)
+            metaRepository.getMetaFromAllAddons(type = type, id = id)
+                .first { it !is com.nuvio.tv.core.network.NetworkResult.Loading }
+            watchProgressRepository.getAllEpisodeProgress(id.substringBefore(":")).first()
+        }
+    }
+
+    /**
+     * Returns the cached backdrop URL from a previously prefetched meta, or null.
+     */
+    fun getCachedBackdrop(id: String, type: String): String? {
+        return metaRepository.getCachedMeta(type, id)?.backdropUrl
+    }
+
     fun onEvent(event: SearchEvent) {
         when (event) {
             is SearchEvent.QueryChanged -> onQueryChanged(event.query)
             SearchEvent.SubmitSearch -> submitSearch()
+            SearchEvent.RememberSearchFromTextInput -> rememberSearchFromTextInput()
             SearchEvent.ClearRecentSearches -> clearRecentSearches()
             is SearchEvent.LoadMoreCatalog -> loadMoreCatalogItems(
                 catalogId = event.catalogId,
@@ -235,7 +268,7 @@ class SearchViewModel @Inject constructor(
         if (trimmed.length >= MIN_SEARCH_QUERY_LENGTH) {
             liveSearchJob = viewModelScope.launch {
                 kotlinx.coroutines.delay(LIVE_SEARCH_DEBOUNCE_MS)
-                performSearch(query)
+                performSearch(query, keepSuggestions = true)
             }
         } else {
             // Emptying the field has to retire the submitted query too. Leaving it set kept the
@@ -319,13 +352,42 @@ class SearchViewModel @Inject constructor(
             }
 
             suggestionJobs.joinAll()
+
+            // Nothing came back for this query. The strip keeps the previous query's titles
+            // while a fetch is in flight, to avoid blinking on every keystroke, so without this
+            // it would keep captioning text the field no longer contains. Live search used to
+            // clear it as a side effect; it no longer does.
+            if (collectedNames.isEmpty() && _uiState.value.query.trim() == query) {
+                _uiState.update { it.copy(suggestions = emptyList()) }
+            }
         }
     }
 
     private fun submitSearch() {
         // An explicit submit just skips the remaining debounce; the live run would land anyway.
         liveSearchJob?.cancel()
-        performSearch(_uiState.value.query)
+        performSearch(_uiState.value.query, rememberToHistory = true)
+    }
+
+    /**
+     * Moving from the text input into the results confirms the current query the same way
+     * Done/submit does. Live search may already have results on screen without an explicit
+     * submit; saving here
+     * avoids losing useful history while still not recording every keystroke prefix.
+     */
+    private fun rememberSearchFromTextInput() {
+        val state = _uiState.value
+        val query = state.submittedQuery.trim().ifBlank { state.query.trim() }
+        if (query.length < MIN_SEARCH_QUERY_LENGTH) return
+        val hasRealResults = state.catalogRows.any { row ->
+            row.items.any { item -> !item.id.startsWith("__placeholder_") }
+        } || catalogsMap.values.any { row ->
+            row.items.any { item -> !item.id.startsWith("__placeholder_") }
+        }
+        if (!hasRealResults) return
+        viewModelScope.launch {
+            searchHistoryDataStore.saveRecentSearch(query, MAX_RECENT_SEARCHES)
+        }
     }
 
     private fun clearRecentSearches() {
@@ -371,14 +433,25 @@ class SearchViewModel @Inject constructor(
     }
 
 
-    private fun performSearch(rawQuery: String) {
+    /**
+     * @param keepSuggestions live search runs this on every keystroke, while the field is still
+     * being typed into and the suggestion strip is the whole point. Those runs leave the strip
+     * alone. A submit or a retry replaces the screen with results, which retires it.
+     */
+    private fun performSearch(
+        rawQuery: String,
+        rememberToHistory: Boolean = false,
+        keepSuggestions: Boolean = false
+    ) {
         val query = rawQuery.trim()
-        suggestionJob?.cancel()
+        if (!keepSuggestions) {
+            suggestionJob?.cancel()
+        }
         _uiState.update {
             it.copy(
                 submittedQuery = submittedSearchQuery(query),
                 query = rawQuery,
-                suggestions = emptyList()
+                suggestions = if (keepSuggestions) it.suggestions else emptyList()
             )
         }
 
@@ -430,7 +503,17 @@ class SearchViewModel @Inject constructor(
             val requestKey = buildRequestKey(query, searchTargets)
             val alreadySatisfied = requestKey == lastRequestKey &&
                 (requestKey == lastCompletedRequestKey || activeSearchJobs.any { it.isActive })
-            if (alreadySatisfied) return@launch
+            if (alreadySatisfied) {
+                // An explicit submit that lands on a query the live search already finished still
+                // counts as a search the user confirmed, so remember it instead of skipping out
+                // of the history save below.
+                if (rememberToHistory && catalogsMap.values.any { row -> row.items.isNotEmpty() }) {
+                    viewModelScope.launch {
+                        searchHistoryDataStore.saveRecentSearch(query, MAX_RECENT_SEARCHES)
+                    }
+                }
+                return@launch
+            }
             lastRequestKey = requestKey
 
             // Committed to a new run: drop the previous query's work and accumulated rows.
@@ -538,9 +621,11 @@ class SearchViewModel @Inject constructor(
                 ) {
                     lastCompletedRequestKey = requestKey
                     _uiState.update { it.copy(isSearching = false) }
-                    // Remembered once it has actually returned something, so backing out still
-                    // saves what you typed while typos that match nothing never get recorded.
-                    if (catalogsMap.values.any { row -> row.items.isNotEmpty() }) {
+                    // Only explicit submit (or moving into results from the text input — see
+                    // rememberSearchFromTextInput)
+                    // writes history. Live search fires per keystroke and would otherwise record
+                    // every prefix ("do", "dog") even when the user never confirmed the search.
+                    if (rememberToHistory && catalogsMap.values.any { row -> row.items.isNotEmpty() }) {
                         viewModelScope.launch {
                             searchHistoryDataStore.saveRecentSearch(query, MAX_RECENT_SEARCHES)
                         }
@@ -744,14 +829,12 @@ class SearchViewModel @Inject constructor(
                 }
         }
 
-        val availableTypes = discoverCatalogs.map { it.type }.distinct()
-        val currentType = _uiState.value.selectedDiscoverType
-        val selectedType = if (currentType in availableTypes) currentType else availableTypes.firstOrNull() ?: "movie"
-        val selectedCatalog = pickDiscoverCatalog(
+        val selectedCatalog = resolveDiscoverCatalog(
             catalogs = discoverCatalogs,
-            selectedType = selectedType,
-            preferredKey = _uiState.value.selectedDiscoverCatalogKey
+            preferredKey = discoverSelectionDataStore.getSelectedCatalogKey(),
+            currentKey = _uiState.value.selectedDiscoverCatalogKey
         )
+        val selectedType = selectedCatalog?.type ?: "movie"
         val selectedGenre: String? = null
 
         _uiState.update {
@@ -768,6 +851,11 @@ class SearchViewModel @Inject constructor(
                 discoverHasMore = true,
                 discoverPage = 1
             )
+        }
+        selectedCatalog?.let { catalog ->
+            viewModelScope.launch {
+                discoverSelectionDataStore.setSelectedCatalogKey(catalog.key)
+            }
         }
         fetchDiscoverContent(reset = true)
     }
@@ -791,6 +879,11 @@ class SearchViewModel @Inject constructor(
                 discoverHasMore = true
             )
         }
+        selectedCatalog?.let { catalog ->
+            viewModelScope.launch {
+                discoverSelectionDataStore.setSelectedCatalogKey(catalog.key)
+            }
+        }
         fetchDiscoverContent(reset = true)
     }
 
@@ -806,6 +899,9 @@ class SearchViewModel @Inject constructor(
                 discoverPage = 1,
                 discoverHasMore = true
             )
+        }
+        viewModelScope.launch {
+            discoverSelectionDataStore.setSelectedCatalogKey(catalog.key)
         }
         fetchDiscoverContent(reset = true)
     }
@@ -991,3 +1087,12 @@ class SearchViewModel @Inject constructor(
         return catalogRowStableKey(addonId, addonBaseUrl, type, catalogId)
     }
 }
+
+internal fun resolveDiscoverCatalog(
+    catalogs: List<DiscoverCatalog>,
+    preferredKey: String?,
+    currentKey: String?
+): DiscoverCatalog? =
+    catalogs.firstOrNull { it.key == preferredKey }
+        ?: catalogs.firstOrNull { it.key == currentKey }
+        ?: catalogs.firstOrNull()

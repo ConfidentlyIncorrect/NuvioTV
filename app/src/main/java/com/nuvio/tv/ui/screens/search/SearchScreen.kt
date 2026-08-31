@@ -528,7 +528,12 @@ fun SearchScreen(
                     isVoiceListening = isVoiceListening,
                     voiceRmsLevel = voiceRmsLevel,
                     onVoiceSearch = launchVoiceSearch,
-                    onMoveToResults = { focusResults = true },
+                    onMoveToResults = {
+                        // D-pad down from the text field is the user's confirmation that the
+                        // live-search results are useful, even before a particular card opens.
+                        viewModel.onEvent(SearchEvent.RememberSearchFromTextInput)
+                        focusResults = true
+                    },
                     onOpenDiscover = onOpenDiscover,
                     showDiscoverButton = uiState.discoverLocation == DiscoverLocation.IN_SEARCH,
                     keyboardController = keyboardController,
@@ -682,6 +687,7 @@ fun SearchScreen(
 
                             CatalogRowSection(
                                 catalogRow = catalogRow,
+                                posterCardStyle = posterCardStyle,
                                 showSeeAll = hasEnoughForSeeAll,
                                 showPosterLabels = uiState.posterLabelsEnabled,
                                 showAddonName = uiState.catalogAddonNameEnabled,
@@ -718,6 +724,10 @@ fun SearchScreen(
                                     // pending auto-focus so it doesn't steal focus later.
                                     pendingFocusMoveToResultsQuery = null
                                     searchRowFocusedItemIndex[catalogKey] = itemIndex
+                                    // Prefetch meta for the focused item to warm cache for detail screen.
+                                    catalogRow.items.getOrNull(itemIndex)?.let { item ->
+                                        viewModel.prefetchMetaOnFocus(item.id, item.rawType)
+                                    }
                                     lastFocusedRowKey = catalogKey
                                 },
                                 onItemClick = { id, type, addonBaseUrl ->
@@ -730,7 +740,9 @@ fun SearchScreen(
                                     }
                                     viewModel.hasSavedSearchFocus = true
                                     val clickedItem = catalogRow.items.firstOrNull { it.id == id }
-                                    HeroBackdropState.update(clickedItem?.backdropUrl)
+                                    val backdrop = viewModel.getCachedBackdrop(id, type)
+                                        ?: clickedItem?.backdropUrl
+                                    HeroBackdropState.update(backdrop)
                                     onNavigateToDetail(id, type, addonBaseUrl)
                                 },
                                 onItemLongPress = { item, addonBaseUrl ->
@@ -911,7 +923,8 @@ private fun SearchInputField(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = NuvioTheme.spacing.xxxl),
+            .padding(horizontal = NuvioTheme.spacing.xxxl)
+            .focusGroup(),
         verticalAlignment = Alignment.CenterVertically
     ) {
         if (showDiscoverButton) {
@@ -1059,6 +1072,7 @@ private fun SearchInputField(
                         KeyEvent.KEYCODE_DPAD_DOWN -> {
                             if (canMoveToResults) {
                                 if (keyEvent.nativeKeyEvent.action == KeyEvent.ACTION_DOWN) {
+                                    keyboardController?.hide()
                                     onMoveToResults()
                                 }
                                 return@onPreviewKeyEvent true

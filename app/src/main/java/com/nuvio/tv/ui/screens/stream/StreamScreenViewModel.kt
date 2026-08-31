@@ -23,6 +23,7 @@ import com.nuvio.tv.core.tracking.TrackingScrobbleAction
 import com.nuvio.tv.core.tracking.TrackingScrobbleCoordinator
 import com.nuvio.tv.core.tracking.TrackingScrobbleEvent
 import com.nuvio.tv.core.tracking.buildTrackingMediaReference
+import com.nuvio.tv.core.util.parseRuntimeMinutes
 import com.nuvio.tv.core.streams.StreamBadgePresentation
 import com.nuvio.tv.data.local.PlayerPreference
 import com.nuvio.tv.data.local.PlayerSettings
@@ -44,6 +45,7 @@ import com.nuvio.tv.domain.repository.StreamRepository
 import com.nuvio.tv.domain.repository.WatchProgressRepository
 import com.nuvio.tv.ui.components.SourceChipItem
 import com.nuvio.tv.ui.components.SourceChipStatus
+import com.nuvio.tv.ui.util.localizedGenreLabel
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Job
@@ -107,10 +109,6 @@ class StreamScreenViewModel @Inject constructor(
     private var streamLoadJob: Job? = null
     private var streamLoadScope: kotlinx.coroutines.CoroutineScope? = null
     private var streamLoadCompleted = false
-    // Snapshot of addon streams captured when loading is cancelled mid-flight.
-    // On resume, new repository emissions are merged with this baseline so
-    // already-fetched results stay visible while missing addons get re-fetched.
-    private var resumeBaselineStreams: List<AddonStreams>? = null
     private var sourceChipErrorDismissJob: Job? = null
     private var pendingCacheSaveJob: Job? = null
     private var streamBadgePresentationJob: Job? = null
@@ -306,15 +304,27 @@ class StreamScreenViewModel @Inject constructor(
                     )
                 }
             }
+            StreamScreenEvent.OnRefresh -> {
+                updateUiStateIfChanged {
+                    it.copy(
+                        isLoading = true,
+                        error = null,
+                        selectedAddonFilter = null,
+                        filteredStreams = emptyList()
+                    )
+                }
+                loadStreams(forceRefresh = true)
+            }
             StreamScreenEvent.OnRetry -> loadStreams()
             is StreamScreenEvent.OnSearchScopeSelected -> setSearchScope(event.scope)
             StreamScreenEvent.OnBackPress -> { /* Handle in screen */ }
             StreamScreenEvent.OnResume -> {
                 hostInForeground.value = true
-                // If loading was cancelled (e.g. user went to player) and
-                // hasn't completed yet, resume it. The baseline snapshot
-                // captured at cancel time keeps existing results visible
-                // while the repository re-fetches remaining addons.
+                if (!externalPlaybackTracker.isTracking) {
+                    streamRepository.setLocalPluginSearchPaused(false)
+                }
+                // Reattach to the repository-owned session if playback stopped
+                // this screen's collector before every source finished.
                 if (!streamLoadCompleted && streamLoadJob == null) {
                     loadStreams()
                 }
@@ -323,12 +333,6 @@ class StreamScreenViewModel @Inject constructor(
     }
 
     fun cancelStreamsLoad() {
-        // Capture current results as baseline before cancelling, so that
-        // resuming loading can merge new data on top of what we already have.
-        val currentStreams = _uiState.value.addonStreams
-        if (currentStreams.isNotEmpty()) {
-            resumeBaselineStreams = currentStreams
-        }
         streamLoadScope?.cancel()
         streamLoadScope = null
         streamLoadJob = null
@@ -344,13 +348,16 @@ class StreamScreenViewModel @Inject constructor(
         return streamAutoPlayMode != StreamAutoPlayMode.MANUAL
     }
 
-    private fun loadStreams() {
+    private fun loadStreams(forceRefresh: Boolean = false) {
+        streamRepository.setLocalPluginSearchPaused(false)
         streamLoadScope?.cancel()
         streamLoadScope = null
         streamLoadJob = null
         streamBadgePresentationJob?.cancel()
         streamBadgePresentationRequestId += 1
-        if (resumeBaselineStreams == null) badgedAddonNames = emptySet()
+        if (resumeBaselineStreams == null && (forceRefresh || _uiState.value.addonStreams.isEmpty())) {
+            badgedAddonNames = emptySet()
+        }
         progressivePollJob?.cancel()
         progressivePollJob = null
         progressivePollStarted = false
@@ -463,7 +470,7 @@ class StreamScreenViewModel @Inject constructor(
 
             updateUiStateIfChanged {
                 it.copy(
-                    isLoading = true,
+                    isLoading = forceRefresh || it.allStreams.isEmpty(),
                     error = null,
                     showDirectAutoPlayOverlay = if (directFlowActive) true else it.showDirectAutoPlayOverlay
                 )
@@ -593,29 +600,16 @@ class StreamScreenViewModel @Inject constructor(
                 }
             }
 
-            // Grab and clear the baseline snapshot.  When non-null we are
-            // resuming after a cancel and should merge incoming repository
-            // emissions with these previously-fetched results.
-            val baseline = resumeBaselineStreams
-            resumeBaselineStreams = null
-
-            // If resuming, seed the UI with the baseline immediately so
-            // the user sees their previous results right away.
-            if (baseline != null) {
-                applySuccess(baseline, isAllLoaded = false)
+            val alreadySucceededNames = if (forceRefresh) {
+                emptySet()
+            } else {
+                _uiState.value.addonStreams.mapTo(linkedSetOf()) { it.addonName }
             }
-
-            updateSourceChipsForFetchStart(installedAddons, directDebridSourceNames, baseline)
-
-            // Merges repository data with the resume baseline.  Addons
-            // present in the new data override the baseline; addons only
-            // in the baseline are preserved until the repository catches up.
-            fun mergeWithBaseline(repoData: List<AddonStreams>): List<AddonStreams> {
-                if (baseline == null) return repoData
-                val repoAddonNames = repoData.map { it.addonName }.toSet()
-                val preserved = baseline.filter { it.addonName !in repoAddonNames }
-                return repoData + preserved
-            }
+            updateSourceChipsForFetchStart(
+                installedAddons = installedAddons,
+                directDebridSourceNames = directDebridSourceNames,
+                alreadySucceededNames = alreadySucceededNames
+            )
 
             var lastSuccessData: List<AddonStreams>? = null
             var autoSelectTriggered = false
@@ -671,21 +665,21 @@ class StreamScreenViewModel @Inject constructor(
                     videoId = videoId,
                     season = season,
                     episode = episode,
-                    scope = searchScope.takeIf { it != SEARCH_SCOPE_EPISODE }
+                    scope = searchScope.takeIf { it != SEARCH_SCOPE_EPISODE },
+                    forceRefresh = forceRefresh
                 ).collect { result ->
                     when (result) {
                         is NetworkResult.Success -> {
-                            val merged = mergeWithBaseline(result.data)
-                            lastSuccessData = merged
-                            applySuccess(merged, isAllLoaded = false)
-                            launchDirectDebridPreparationIfNeeded(merged)
+                            lastSuccessData = result.data
+                            applySuccess(result.data, isAllLoaded = false)
+                            launchDirectDebridPreparationIfNeeded(result.data)
 
                             if (autoSelectTriggered || resolvedAutoPlayTarget || autoPlayHandledForSession) {
                                 // Already resolved — nothing more to do.
                             } else if (timeoutElapsed) {
                                 // Timeout elapsed: run full auto-select (binge
                                 // group preferred, then fallback to mode).
-                                applySuccess(merged, isAllLoaded = true)
+                                applySuccess(result.data, isAllLoaded = true)
                                 if (resolvedAutoPlayTarget) {
                                     autoSelectTriggered = true
                                 } else if (directAutoPlayFlowEnabledForSession && !isUnlimitedTimeout) {
@@ -694,7 +688,7 @@ class StreamScreenViewModel @Inject constructor(
                                     // debrid cache check, wait for the next emission
                                     // (which will carry the CACHED/NOT_CACHED result)
                                     // instead of showing the picker immediately.
-                                    val hasCheckingTorrents = merged.any { group ->
+                                    val hasCheckingTorrents = result.data.any { group ->
                                         group.streams.any { s ->
                                             s.isTorrent() && s.debridCacheStatus?.state == com.nuvio.tv.domain.model.StreamDebridCacheState.CHECKING
                                         }
@@ -717,7 +711,7 @@ class StreamScreenViewModel @Inject constructor(
                                 // match is found we can start playback immediately
                                 // without waiting for the full timeout.
                                 val orderedStreams = StreamAutoPlaySelector.orderAddonStreams(
-                                    merged, installedAddonOrder
+                                    result.data, installedAddonOrder
                                 )
                                 val allStreams = orderedStreams.flatMap { it.streams }
                                 val earlyMatch = StreamAutoPlaySelector.selectAutoPlayStream(
@@ -761,7 +755,7 @@ class StreamScreenViewModel @Inject constructor(
                         NetworkResult.Loading -> {
                             updateUiStateIfChanged {
                                 it.copy(
-                                    isLoading = true,
+                                    isLoading = forceRefresh || it.allStreams.isEmpty(),
                                     showDirectAutoPlayOverlay = if (directAutoPlayFlowEnabledForSession) {
                                         true
                                     } else {
@@ -927,7 +921,7 @@ class StreamScreenViewModel @Inject constructor(
     private suspend fun updateSourceChipsForFetchStart(
         installedAddons: List<com.nuvio.tv.domain.model.Addon>,
         directDebridSourceNames: List<String>,
-        baseline: List<AddonStreams>? = null
+        alreadySucceededNames: Set<String> = emptySet()
     ) {
         val addonNames = installedAddons
             .filter { it.supportsStreamResourceForChip(contentType) }
@@ -963,16 +957,10 @@ class StreamScreenViewModel @Inject constructor(
             return
         }
 
-        // When resuming, addons that already returned results in the
-        // previous run keep their SUCCESS status instead of flashing
-        // back to LOADING.  Only genuinely-pending sources show the
-        // loading indicator.
-        val alreadySucceeded = baseline?.map { it.addonName }?.toSet() ?: emptySet()
-
         updateUiStateIfChanged { state ->
             state.copy(
                 sourceChips = orderedNames.map { name ->
-                    if (name in alreadySucceeded) {
+                    if (name in alreadySucceededNames) {
                         SourceChipItem(name = name, status = SourceChipStatus.SUCCESS)
                     } else {
                         SourceChipItem(name = name, status = SourceChipStatus.LOADING)
@@ -1230,7 +1218,8 @@ class StreamScreenViewModel @Inject constructor(
             val meta = result.data
             playbackMetaVideos = meta.videos
             if (!requiresMetadataLookup) return@launch
-            val metaGenres = meta.genres.takeIf { it.isNotEmpty() }?.joinToString(" • ")
+            val metaGenres = meta.genres.takeIf { it.isNotEmpty() }
+                ?.joinToString(" • ") { localizedGenreLabel(context, it) }
             val metaYear = meta.releaseInfo
                 ?.substringBefore("-")
                 ?.takeIf { it.isNotBlank() }
@@ -1269,9 +1258,7 @@ class StreamScreenViewModel @Inject constructor(
         if (season != null && episode != null) {
             return meta.videos.firstOrNull { it.season == season && it.episode == episode }?.runtime
         }
-        return meta.runtime
-            ?.let { Regex("(\\d+)").find(it)?.groupValues?.getOrNull(1) }
-            ?.toIntOrNull()
+        return parseRuntimeMinutes(meta.runtime)
     }
 
     private fun setSearchScope(scope: String) {
@@ -1394,6 +1381,7 @@ class StreamScreenViewModel @Inject constructor(
     }
 
     fun onInternalPlayerLaunching() {
+        streamRepository.setLocalPluginSearchPaused(true)
         updateUiStateIfChanged {
             it.copy(showDirectAutoPlayOverlay = false, directAutoPlayMessage = null)
         }
@@ -1450,6 +1438,7 @@ class StreamScreenViewModel @Inject constructor(
         } else {
             externalPlaybackTracker.stopTracking()
         }
+        streamRepository.setLocalPluginSearchPaused(false)
         updateUiStateIfChanged {
             it.copy(
                 showDirectAutoPlayOverlay = false,
@@ -1480,7 +1469,7 @@ class StreamScreenViewModel @Inject constructor(
             )
         }
         if (refreshStreams) {
-            loadStreams()
+            loadStreams(forceRefresh = true)
         }
     }
 
@@ -1592,9 +1581,11 @@ class StreamScreenViewModel @Inject constructor(
         playbackInfo: StreamPlaybackInfo,
         url: String,
         resumePositionMs: Long = 0L,
+        startFromBeginning: Boolean = false,
         autoLaunch: Boolean = false,
         context: android.content.Context
     ) {
+        streamRepository.setLocalPluginSearchPaused(true)
         externalOverlayHideJob?.cancel()
         // Preserve the current message; blanking it made the card's Crossfade flash
         // empty before the subtitle/skip fetch set the next one.
@@ -1734,6 +1725,7 @@ class StreamScreenViewModel @Inject constructor(
                     )
                 }
                 externalPlaybackTracker.releaseAutoNextOverlay(forceRelease = true)
+                streamRepository.setLocalPluginSearchPaused(false)
                 return
             } finally {
                 call?.cancel()
@@ -1795,6 +1787,7 @@ class StreamScreenViewModel @Inject constructor(
             title = metadata.buildPlayerTitle(),
             headers = playbackInfo.headers,
             resumePositionMs = resumePositionMs,
+            startFromBeginning = startFromBeginning,
             subtitles = subtitleInputs,
             autoLaunch = autoLaunch,
             nextEpisodeSnapshot = playbackMetaVideos?.let { videos ->
@@ -1807,6 +1800,7 @@ class StreamScreenViewModel @Inject constructor(
             context = context
         )
         if (!launched) {
+            streamRepository.setLocalPluginSearchPaused(false)
             externalPlayerLaunched = false
             externalPlayerLaunchTimeMs = 0L
             updateUiStateIfChanged {
@@ -1975,7 +1969,9 @@ class StreamScreenViewModel @Inject constructor(
         )
         return reference.takeIf { media ->
             media.hasResolvableIdentity &&
-                (media.kind == TrackingMediaKind.MOVIE || media.episode != null)
+                (media.kind == TrackingMediaKind.MOVIE ||
+                    media.kind == TrackingMediaKind.ANIME ||
+                    media.episode != null)
         }
     }
 

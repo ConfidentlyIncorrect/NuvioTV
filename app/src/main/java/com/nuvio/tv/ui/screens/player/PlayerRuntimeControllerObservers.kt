@@ -6,7 +6,9 @@ import androidx.media3.common.C
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import com.nuvio.tv.data.local.FrameRateMatchingMode
+import com.nuvio.tv.data.local.InternalPlayerEngine
 import com.nuvio.tv.domain.model.Subtitle
+import com.nuvio.tv.domain.model.WatchProgress
 import com.nuvio.tv.domain.model.enabledAddons
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -306,7 +308,8 @@ internal fun PlayerRuntimeController.observeSubtitleSettings() {
                     osdClockEnabled = settings.osdClockEnabled,
                     internalPlayerEngine = resolvedInternalPlayerEngine,
                     frameRateMatchingMode = settings.frameRateMatchingMode,
-                    tunnelingEnabled = settings.tunnelingEnabled,
+                    tunnelingEnabled = settings.effectiveTunnelingEnabled &&
+                            resolvedInternalPlayerEngine != InternalPlayerEngine.MVP_PLAYER,
                     persistAudioAmplification = settings.persistAudioAmplification,
                     audioAmplificationDb = resolvedAudioAmplificationDb,
                     centerMixLevelDb = resolvedCenterMixLevelDb
@@ -321,10 +324,7 @@ internal fun PlayerRuntimeController.observeSubtitleSettings() {
             }
 
             if (settings.rememberAudioDelayPerDevice && !wasRememberingAudioDelayPerDevice) {
-                registerAudioDelayRouteCallback()
                 applyStoredAudioDelayForCurrentRouteIfEnabled()
-            } else if (!settings.rememberAudioDelayPerDevice && wasRememberingAudioDelayPerDevice) {
-                unregisterAudioDelayRouteCallback()
             }
 
             bufferLogsEnabled = settings.enableBufferLogs
@@ -459,14 +459,18 @@ internal fun PlayerRuntimeController.observeSubtitleSettings() {
 }
 
 internal fun PlayerRuntimeController.loadSavedProgressFor(season: Int?, episode: Int?) {
-    if (contentId == null) return
+    val isCloudLibraryPlayback = contentType.equals("cloud", ignoreCase = true)
+    val progressContentId = contentId
+    if (!isCloudLibraryPlayback && progressContentId == null) return
 
     scope.launch {
         pendingResumeProgress = null
-        val progress = if (season != null && episode != null) {
-            watchProgressRepository.getEpisodeProgress(contentId, season, episode).firstOrNull()
+        val progress = if (isCloudLibraryPlayback) {
+            loadCloudLibraryResumeProgress()
+        } else if (season != null && episode != null) {
+            watchProgressRepository.getEpisodeProgress(progressContentId!!, season, episode).firstOrNull()
         } else {
-            watchProgressRepository.getProgress(contentId).firstOrNull()
+            watchProgressRepository.getProgress(progressContentId!!).firstOrNull()
         }
 
         progress?.let { saved ->
@@ -500,13 +504,17 @@ internal fun PlayerRuntimeController.loadSavedProgressFor(season: Int?, episode:
  * player lifecycle and can lose the resume position entirely.
  */
 internal suspend fun PlayerRuntimeController.loadSavedProgressSuspend(season: Int?, episode: Int?) {
-    if (contentId == null) return
+    val isCloudLibraryPlayback = contentType.equals("cloud", ignoreCase = true)
+    val progressContentId = contentId
+    if (!isCloudLibraryPlayback && progressContentId == null) return
 
     pendingResumeProgress = null
-    val progress = if (season != null && episode != null) {
-        watchProgressRepository.getEpisodeProgress(contentId, season, episode).firstOrNull()
+    val progress = if (isCloudLibraryPlayback) {
+        loadCloudLibraryResumeProgress()
+    } else if (season != null && episode != null) {
+        watchProgressRepository.getEpisodeProgress(progressContentId!!, season, episode).firstOrNull()
     } else {
-        watchProgressRepository.getProgress(contentId).firstOrNull()
+        watchProgressRepository.getProgress(progressContentId!!).firstOrNull()
     }
 
     progress?.let { saved ->
@@ -520,6 +528,30 @@ internal suspend fun PlayerRuntimeController.loadSavedProgressSuspend(season: In
             )
         }
     }
+}
+
+private fun PlayerRuntimeController.loadCloudLibraryResumeProgress(): WatchProgress? {
+    val playbackContext = cloudPlaybackContext ?: return null
+    val file = playbackContext.fileForVideoId(currentVideoId) ?: return null
+    val saved = cloudPlaybackProgressStore.load(playbackContext.item, file) ?: return null
+    if (!saved.isInProgress) return null
+
+    return WatchProgress(
+        contentId = playbackContext.item.stableKey,
+        contentType = "cloud",
+        name = playbackContext.item.name,
+        poster = null,
+        backdrop = null,
+        logo = null,
+        videoId = playbackContext.videoId(file),
+        season = 1,
+        episode = playbackContext.episodeNumber(file),
+        episodeTitle = file.name,
+        position = saved.positionMs,
+        duration = saved.durationMs,
+        lastWatched = saved.updatedAtMs,
+        progressPercent = if (saved.durationMs <= 0L) 5f else null
+    )
 }
 
 internal fun PlayerRuntimeController.fetchSkipIntervals(id: String?, season: Int?, episode: Int?) {
@@ -849,6 +881,23 @@ internal fun PlayerRuntimeController.scheduleDeferredPlayerReinitialize(
                 )
             }
         }
+    }
+}
+
+internal fun PlayerRuntimeController.observePlayerStatsHud() {
+    scope.launch {
+        deviceLocalPlayerPreferences.playerStatsHudEnabled
+            .distinctUntilChanged()
+            .collect { enabled ->
+                // The button outlives the setting for the rest of the playback, so turning the
+                // overlay off from it leaves a way to turn it back on without visiting settings.
+                _uiState.update {
+                    it.copy(
+                        playerStatsHudEnabled = enabled,
+                        playerStatsHudButtonAvailable = it.playerStatsHudButtonAvailable || enabled
+                    )
+                }
+            }
     }
 }
 

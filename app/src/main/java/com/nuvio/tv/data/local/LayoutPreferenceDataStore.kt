@@ -25,16 +25,26 @@ import com.nuvio.tv.domain.model.DEFAULT_CARD_DEPTH_EDGE_COVERAGE
 import com.nuvio.tv.domain.model.DEFAULT_CARD_DEPTH_EDGE_STRENGTH
 import com.nuvio.tv.domain.model.DEFAULT_CARD_DEPTH_SHEEN_STRENGTH
 import com.nuvio.tv.domain.model.DiscoverLocation
+import com.nuvio.tv.domain.model.EpisodeOptionsOverlayStyle
 import com.nuvio.tv.domain.model.FocusedPosterTrailerPlaybackTarget
+import com.nuvio.tv.domain.model.DetailImdbRatingsVisibility
 import com.nuvio.tv.domain.model.HomeLayout
+import com.nuvio.tv.domain.model.HomeImdbRatingsVisibility
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class LayoutPreferenceDataStore @Inject constructor(
     private val factory: ProfileDataStoreFactory,
     private val profileManager: ProfileManager
@@ -48,6 +58,8 @@ class LayoutPreferenceDataStore @Inject constructor(
         private const val DEFAULT_FOCUSED_POSTER_BACKDROP_EXPAND_DELAY_SECONDS = 3
         private const val MIN_FOCUSED_POSTER_BACKDROP_EXPAND_DELAY_SECONDS = 0
     }
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private fun store(profileId: Int = profileManager.activeProfileId.value) =
         factory.get(profileId, FEATURE)
@@ -90,7 +102,11 @@ class LayoutPreferenceDataStore @Inject constructor(
     private val cardDepthCastEnabledKey = booleanPreferencesKey("card_depth_cast_enabled")
     private val cardDepthTrailersEnabledKey = booleanPreferencesKey("card_depth_trailers_enabled")
     private val blurUnwatchedEpisodesKey = booleanPreferencesKey("blur_unwatched_episodes")
+    private val episodeOptionsOverlayStyleKey = stringPreferencesKey("episode_options_overlay_style")
+    private val homeImdbRatingsVisibilityKey = stringPreferencesKey("home_imdb_ratings_visibility")
+    private val detailImdbRatingsVisibilityKey = stringPreferencesKey("detail_imdb_ratings_visibility")
     private val useEpisodeThumbnailsInCwKey = booleanPreferencesKey("use_episode_thumbnails_in_cw")
+    private val continueWatchingEnabledKey = booleanPreferencesKey("continue_watching_enabled")
     private val continueWatchingCardStyleKey = stringPreferencesKey("continue_watching_card_style")
     private val showUnairedNextUpKey = booleanPreferencesKey("show_unaired_next_up")
     private val nextUpFromFurthestEpisodeKey = booleanPreferencesKey("next_up_from_furthest_episode")
@@ -140,6 +156,10 @@ class LayoutPreferenceDataStore @Inject constructor(
         } catch (e: IllegalArgumentException) {
             HomeLayout.MODERN
         }
+    }
+
+    val continueWatchingEnabled: Flow<Boolean> = profileFlow { prefs ->
+        prefs[continueWatchingEnabledKey] ?: true
     }
 
     val continueWatchingCardStyle: Flow<ContinueWatchingCardStyle> = profileFlow { prefs ->
@@ -320,6 +340,25 @@ class LayoutPreferenceDataStore @Inject constructor(
         prefs[blurUnwatchedEpisodesKey] ?: false
     }
 
+    val episodeOptionsOverlayStyle: Flow<EpisodeOptionsOverlayStyle> = profileFlow { prefs ->
+        val stored = prefs[episodeOptionsOverlayStyleKey] ?: EpisodeOptionsOverlayStyle.ARTWORK.name
+        runCatching { EpisodeOptionsOverlayStyle.valueOf(stored) }
+            .getOrDefault(EpisodeOptionsOverlayStyle.ARTWORK)
+    }
+
+    val homeImdbRatingsVisibility: Flow<HomeImdbRatingsVisibility> = profileFlow { prefs ->
+        val stored = prefs[homeImdbRatingsVisibilityKey] ?: HomeImdbRatingsVisibility.SHOW_ALL.name
+        runCatching { HomeImdbRatingsVisibility.valueOf(stored) }
+            .getOrDefault(HomeImdbRatingsVisibility.SHOW_ALL)
+    }
+
+    val detailImdbRatingsVisibility: Flow<DetailImdbRatingsVisibility> = profileFlow { prefs ->
+        val stored = prefs[detailImdbRatingsVisibilityKey] ?: DetailImdbRatingsVisibility.SHOW_ALL.name
+        runCatching { DetailImdbRatingsVisibility.valueOf(stored) }
+            .getOrDefault(DetailImdbRatingsVisibility.SHOW_ALL)
+            .asEpisodeVisibility()
+    }
+
     val useEpisodeThumbnailsInCw: Flow<Boolean> = profileFlow { prefs ->
         prefs[useEpisodeThumbnailsInCwKey] ?: true
     }
@@ -328,9 +367,9 @@ class LayoutPreferenceDataStore @Inject constructor(
         prefs[showUnairedNextUpKey] ?: true
     }
 
-    val nextUpFromFurthestEpisode: Flow<Boolean> = profileFlow { prefs ->
+    val nextUpFromFurthestEpisode: StateFlow<Boolean> = profileFlow { prefs ->
         prefs[nextUpFromFurthestEpisodeKey] ?: true
-    }
+    }.stateIn(scope, SharingStarted.Eagerly, true)
 
     val blurContinueWatchingNextUp: Flow<Boolean> = profileFlow { prefs ->
         prefs[blurContinueWatchingNextUpKey] ?: false
@@ -346,9 +385,9 @@ class LayoutPreferenceDataStore @Inject constructor(
         prefs[detailPageTrailerButtonEnabledKey] ?: true
     }
 
-    val preferExternalMetaAddonDetail: Flow<Boolean> = profileFlow { prefs ->
+    val preferExternalMetaAddonDetail: StateFlow<Boolean> = profileFlow { prefs ->
         prefs[preferExternalMetaAddonDetailKey] ?: true
-    }
+    }.stateIn(scope, SharingStarted.Eagerly, true)
 
     // Fully kill the app process when leaving via Back (at a root screen). Off by default → keep
     // upstream's behavior (finish the task but let Android cache the process).
@@ -666,9 +705,33 @@ class LayoutPreferenceDataStore @Inject constructor(
         }
     }
 
+    suspend fun setEpisodeOptionsOverlayStyle(style: EpisodeOptionsOverlayStyle) {
+        store().edit { prefs ->
+            prefs[episodeOptionsOverlayStyleKey] = style.name
+        }
+    }
+
+    suspend fun setHomeImdbRatingsVisibility(visibility: HomeImdbRatingsVisibility) {
+        store().edit { prefs ->
+            prefs[homeImdbRatingsVisibilityKey] = visibility.name
+        }
+    }
+
+    suspend fun setDetailImdbRatingsVisibility(visibility: DetailImdbRatingsVisibility) {
+        store().edit { prefs ->
+            prefs[detailImdbRatingsVisibilityKey] = visibility.asEpisodeVisibility().name
+        }
+    }
+
     suspend fun setUseEpisodeThumbnailsInCw(enabled: Boolean) {
         store().edit { prefs ->
             prefs[useEpisodeThumbnailsInCwKey] = enabled
+        }
+    }
+
+    suspend fun setContinueWatchingEnabled(enabled: Boolean) {
+        store().edit { prefs ->
+            prefs[continueWatchingEnabledKey] = enabled
         }
     }
 

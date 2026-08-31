@@ -4,6 +4,7 @@ import com.nuvio.tv.core.auth.AuthManager
 import com.nuvio.tv.core.network.NetworkResult
 import com.nuvio.tv.core.sync.WatchProgressSyncService
 import com.nuvio.tv.core.sync.WatchedItemsSyncService
+import android.os.SystemClock
 import android.util.Log
 import com.nuvio.tv.data.local.TraktSettingsDataStore
 import com.nuvio.tv.data.local.WatchProgressSource
@@ -41,6 +42,9 @@ import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.flatMapLatest
@@ -58,6 +62,63 @@ import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.async
 import javax.inject.Inject
 import javax.inject.Singleton
+
+private const val REMOTE_PROGRESS_WRITE_DEDUP_WINDOW_MS = 5_000L
+
+private data class RemoteProgressWriteKey(
+    val profileId: Int,
+    val progressKey: String
+)
+
+private data class RemoteProgressWrite(
+    val progress: WatchProgress,
+    val sentAtMs: Long
+)
+
+internal class RemoteProgressWriteDeduplicator(
+    private val windowMs: Long = REMOTE_PROGRESS_WRITE_DEDUP_WINDOW_MS
+) {
+    private val lock = Any()
+    private val recentWrites = mutableMapOf<RemoteProgressWriteKey, RemoteProgressWrite>()
+
+    fun shouldSend(
+        profileId: Int,
+        progressKey: String,
+        progress: WatchProgress,
+        nowMs: Long
+    ): Boolean = synchronized(lock) {
+        recentWrites.entries.removeAll { (_, write) ->
+            val elapsedMs = nowMs - write.sentAtMs
+            elapsedMs < 0L || elapsedMs >= windowMs
+        }
+        val key = RemoteProgressWriteKey(profileId, progressKey)
+        val normalizedProgress = progress.copy(lastWatched = 0L)
+        if (recentWrites[key]?.progress == normalizedProgress) {
+            return@synchronized false
+        }
+        recentWrites[key] = RemoteProgressWrite(normalizedProgress, nowMs)
+        true
+    }
+}
+
+internal fun resolveProviderEpisodeProgress(
+    contentId: String,
+    season: Int,
+    episode: Int,
+    episodeProgress: Map<Pair<Int, Int>, WatchProgress>,
+    allProgress: List<WatchProgress>
+): WatchProgress? {
+    val liveProgress = allProgress
+        .asSequence()
+        .filter { progress ->
+            progress.contentId.equals(contentId, ignoreCase = true) &&
+                progress.season == season &&
+                progress.episode == episode
+        }
+        .maxByOrNull(WatchProgress::lastWatched)
+    return listOfNotNull(episodeProgress[season to episode], liveProgress)
+        .maxByOrNull(WatchProgress::lastWatched)
+}
 
 @Singleton
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -100,6 +161,7 @@ class WatchProgressRepositoryImpl @Inject constructor(
     private var watchedItemsSyncJob: Job? = null
     private val pendingWatchedItemsLock = Any()
     private val pendingWatchedItems = linkedMapOf<WatchedItemSyncKey, WatchedItem>()
+    private val remoteProgressWriteDeduplicator = RemoteProgressWriteDeduplicator()
     var isSyncingFromRemote = false
     var hasCompletedInitialPull = false
     var hasCompletedInitialWatchedItemsPull = false
@@ -109,6 +171,8 @@ class WatchProgressRepositoryImpl @Inject constructor(
         replay = 1,
         extraBufferCapacity = 16
     )
+    private val optimisticWatchedMovieAdditions = MutableStateFlow<Set<String>>(emptySet())
+    private val optimisticWatchedMovieRemovals = MutableStateFlow<Set<String>>(emptySet())
     private val metadataMutex = Mutex()
     private val inFlightMetadataKeys = mutableSetOf<String>()
     private val metadataHydrationLimit = 30
@@ -286,24 +350,28 @@ class WatchProgressRepositoryImpl @Inject constructor(
     ) { states -> states.toMap() }
     @Volatile private var activeProgressProviderId: TrackingProviderId? = null
 
-    init {
-        syncScope.launch {
-            activeProgressProviderFlow().collect { provider ->
-                activeProgressProviderId = provider?.providerId
-            }
-        }
-    }
-
     @OptIn(FlowPreview::class)
-    private fun activeProgressProviderFlow(): Flow<TrackingProgressProvider?> = combine(
+    private val activeProgressProviderState: StateFlow<TrackingProgressProvider?> = combine(
         traktSettingsDataStore.watchProgressSource,
         progressProviderConnections
     ) { requested, connections ->
         effectiveWatchProgressSource(requested) { providerId -> connections[providerId] == true }
             .providerId
             ?.let(trackingProgressProviders::provider)
-    }.debounce { provider -> if (provider == null) 300L else 0L }
-        .distinctUntilChanged()
+    }.debounce { provider ->
+        if (provider == null) 100L else 0L
+    }.distinctUntilChanged()
+        .stateIn(syncScope, SharingStarted.Eagerly, null)
+
+    init {
+        syncScope.launch {
+            activeProgressProviderState.collect { provider ->
+                activeProgressProviderId = provider?.providerId
+            }
+        }
+    }
+
+    private fun activeProgressProviderFlow(): Flow<TrackingProgressProvider?> = activeProgressProviderState
 
     private suspend fun activeProgressProvider(): TrackingProgressProvider? =
         activeProgressProviderFlow().first()
@@ -392,7 +460,18 @@ class WatchProgressRepositoryImpl @Inject constructor(
         return activeProgressProviderFlow()
             .flatMapLatest { provider ->
                 if (provider != null) {
-                    provider.episodeProgress(contentId).map { items -> items[season to episode] }
+                    combine(
+                        provider.episodeProgress(contentId),
+                        provider.allProgress
+                    ) { items, allProgress ->
+                        resolveProviderEpisodeProgress(
+                            contentId = contentId,
+                            season = season,
+                            episode = episode,
+                            episodeProgress = items,
+                            allProgress = allProgress
+                        )
+                    }
                 } else {
                     watchProgressPreferences.getEpisodeProgress(contentId, season, episode)
                 }
@@ -513,7 +592,7 @@ class WatchProgressRepositoryImpl @Inject constructor(
 
     @OptIn(FlowPreview::class)
     override fun observeWatchedMovieIds(): Flow<Set<String>> {
-        return activeProgressProviderFlow()
+        val baseFlow = activeProgressProviderFlow()
             .flatMapLatest { provider ->
                 if (provider != null) {
                     provider.watchedMovieIds
@@ -541,7 +620,31 @@ class WatchProgressRepositoryImpl @Inject constructor(
                     }.debounce(500)
                 }
             }
-            .distinctUntilChanged()
+        return combine(
+            baseFlow,
+            optimisticWatchedMovieAdditions,
+            optimisticWatchedMovieRemovals
+        ) { base, additions, removals ->
+            (base + additions) - removals
+        }.distinctUntilChanged()
+    }
+
+    override fun applyOptimisticWatchedMovie(ids: Set<String>, add: Boolean) {
+        if (add) {
+            optimisticWatchedMovieAdditions.update { it + ids }
+            optimisticWatchedMovieRemovals.update { it - ids }
+        } else {
+            optimisticWatchedMovieRemovals.update { it + ids }
+            optimisticWatchedMovieAdditions.update { it - ids }
+        }
+    }
+
+    override fun revertOptimisticWatchedMovie(ids: Set<String>, add: Boolean) {
+        if (add) {
+            optimisticWatchedMovieAdditions.update { it - ids }
+        } else {
+            optimisticWatchedMovieRemovals.update { it - ids }
+        }
     }
 
     override suspend fun getWatchedShowEpisodes(): Map<String, Set<Pair<Int, Int>>> {
@@ -610,12 +713,21 @@ class WatchProgressRepositoryImpl @Inject constructor(
             traktSettingsDataStore.removeDismissedNextUpKeysForContent(progress.contentId)
         }
         val profileId = profileManager.activeProfileId.value
+        val progressKey = progressKey(progress)
+        val shouldPushRemote = syncRemote &&
+            authManager.isAuthenticated &&
+            remoteProgressWriteDeduplicator.shouldSend(
+                profileId = profileId,
+                progressKey = progressKey,
+                progress = progress,
+                nowMs = SystemClock.elapsedRealtime()
+            )
         activeProgressProvider()?.applyOptimisticProgress(progress, quiet = !syncRemote)
         watchProgressPreferences.saveProgress(progress, profileId = profileId)
 
-        if (syncRemote && authManager.isAuthenticated) {
+        if (shouldPushRemote) {
             syncScope.launch(NonCancellable) {
-                watchProgressSyncService.pushSingleToRemote(progressKey(progress), progress, profileId)
+                watchProgressSyncService.pushSingleToRemote(progressKey, progress, profileId)
                     .onFailure { error ->
                         Log.w(TAG, "Failed single progress push; falling back to full sync next cycle", error)
                     }
@@ -625,7 +737,7 @@ class WatchProgressRepositoryImpl @Inject constructor(
         if (progress.isCompleted()) {
             val watchedItem = progress.toWatchedItem()
             watchedItemsPreferences.markAsWatched(watchedItem, profileId = profileId)
-            if (syncRemote && authManager.isAuthenticated) {
+            if (shouldPushRemote) {
                 triggerWatchedItemsSync(listOf(watchedItem), profileId = profileId)
             }
             // Emit optimistic continue-watching update so the next episode

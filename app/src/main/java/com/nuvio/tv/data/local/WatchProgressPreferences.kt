@@ -23,6 +23,8 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.mapNotNull
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import javax.inject.Inject
@@ -66,9 +68,28 @@ class WatchProgressPreferences @Inject constructor(
     private val deltaInitializedKey = booleanPreferencesKey("watch_progress_delta_initialized")
     private val storageMutex = Mutex()
     private val initializedProfiles = mutableSetOf<Int>()
+    private val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO)
 
     @Volatile private var recentMapCache: ProgressMapCache? = null
     @Volatile private var archiveMapCache: ProgressMapCache? = null
+
+    /** Hot snapshot flow — reads DataStore once, then stays in memory. Updates automatically. */
+    private val hotProgressSnapshots: kotlinx.coroutines.flow.StateFlow<ProgressSnapshot?> =
+        profileManager.activeProfileId.flatMapLatest { pid ->
+            progressSnapshotsCold(pid)
+        }.stateIn(scope, kotlinx.coroutines.flow.SharingStarted.Eagerly, null)
+
+    /**
+     * Returns hot in-memory snapshot for active profile (instant read after first load).
+     */
+    private fun progressSnapshots(profileId: Int): Flow<ProgressSnapshot> {
+        // For active profile, use hot flow (in-memory, no disk I/O after first read).
+        return if (profileId == profileManager.activeProfileId.value) {
+            hotProgressSnapshots.mapNotNull { it }
+        } else {
+            progressSnapshotsCold(profileId)
+        }
+    }
 
     /** Persisted timestamp of the last successful push to remote. */
     suspend fun getLastSuccessfulPushMs(profileId: Int = profileManager.activeProfileId.value): Long {
@@ -76,9 +97,15 @@ class WatchProgressPreferences @Inject constructor(
         return prefs[lastSuccessfulPushMsKey] ?: 0L
     }
 
-    suspend fun setLastSuccessfulPushMs(timestampMs: Long, profileId: Int = profileManager.activeProfileId.value) {
+    /**
+     * Advances the stored push point, never lowering it. The comparison happens inside
+     * the edit, so two pushes finishing out of order cannot leave the older one on disk.
+     * Nothing needs to lower it: deleting a profile removes the whole store.
+     */
+    suspend fun advanceLastSuccessfulPushMs(timestampMs: Long, profileId: Int = profileManager.activeProfileId.value) {
         metadataStore(profileId).edit { prefs ->
-            prefs[lastSuccessfulPushMsKey] = timestampMs
+            val stored = prefs[lastSuccessfulPushMsKey] ?: 0L
+            prefs[lastSuccessfulPushMsKey] = maxOf(stored, timestampMs)
         }
     }
 
@@ -582,7 +609,7 @@ class WatchProgressPreferences @Inject constructor(
         }
     }
 
-    private fun progressSnapshots(profileId: Int): Flow<ProgressSnapshot> = flow {
+    private fun progressSnapshotsCold(profileId: Int): Flow<ProgressSnapshot> = flow {
         ensureStorage(profileId)
         emitAll(
             combine(
