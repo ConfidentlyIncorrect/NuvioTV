@@ -89,6 +89,7 @@ import com.nuvio.tv.core.util.EpgGuide
 import com.nuvio.tv.domain.model.Stream
 import com.nuvio.tv.ui.components.SourceChipItem
 import com.nuvio.tv.ui.components.SourceChipStatus
+import com.nuvio.tv.ui.components.SourceStatusFilterChip
 import com.nuvio.tv.ui.components.P2pConsentDialog
 import com.nuvio.tv.ui.components.StreamBadgeChips
 import com.nuvio.tv.ui.components.StreamsSkeletonList
@@ -972,6 +973,30 @@ private fun RightStreamSection(
 }
 
 @OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun ScopeSelectorRow(
+    searchScope: String,
+    onScopeSelected: (String) -> Unit
+) {
+    val options = listOf(
+        SEARCH_SCOPE_EPISODE to "Episode",
+        SEARCH_SCOPE_SEASON to "Season",
+        SEARCH_SCOPE_SERIES to "Series"
+    )
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.lg),
+        modifier = Modifier.padding(horizontal = NuvioTheme.spacing.sm, vertical = NuvioTheme.spacing.xs)
+    ) {
+        options.forEach { (value, label) ->
+            SourceStatusFilterChip(
+                name = label,
+                isSelected = searchScope == value,
+                onClick = { onScopeSelected(value) }
+            )
+        }
+    }
+}
+
 @Composable
 private fun LoadingState(showAddonLogo: Boolean = true) {
     StreamsSkeletonList(showAddonLogo = showAddonLogo)

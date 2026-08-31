@@ -93,6 +93,8 @@ internal fun EpisodeOptionsOverlay(
     hasProgress: Boolean = false,
     onDismiss: () -> Unit,
     onPlay: () -> Unit,
+    onShowDescription: () -> Unit = {},
+    showDescription: Boolean = false,
     onStartFromBeginning: () -> Unit = {},
     onOpenEpisodeComments: () -> Unit = {},
     showOpenEpisodeComments: Boolean = false,
@@ -214,6 +216,14 @@ internal fun EpisodeOptionsOverlay(
                 onClick = onPlay
             )
         )
+        if (showDescription) {
+            add(
+                EpisodeOverlayAction(
+                    label = stringResource(R.string.episodes_view_description),
+                    onClick = onShowDescription
+                )
+            )
+        }
         if (showOpenEpisodeComments) {
             add(
                 EpisodeOverlayAction(

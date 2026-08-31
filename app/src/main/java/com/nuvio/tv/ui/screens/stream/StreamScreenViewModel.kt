@@ -355,7 +355,7 @@ class StreamScreenViewModel @Inject constructor(
         streamLoadJob = null
         streamBadgePresentationJob?.cancel()
         streamBadgePresentationRequestId += 1
-        if (resumeBaselineStreams == null && (forceRefresh || _uiState.value.addonStreams.isEmpty())) {
+        if (forceRefresh || _uiState.value.addonStreams.isEmpty()) {
             badgedAddonNames = emptySet()
         }
         progressivePollJob?.cancel()
